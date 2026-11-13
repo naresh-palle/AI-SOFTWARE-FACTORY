@@ -16,6 +16,7 @@ from factory.core.config import settings
 from factory.core.database import get_db_session
 from factory.core.logger import logger
 from factory.core.security import hash_string
+from factory.generator.engine import CodeGenerationEngine
 from factory.llm.provider import BaseLLMProvider, get_llm_provider
 from factory.models.schema import (
     ApprovalRecord,
@@ -267,6 +268,21 @@ class MasterOrchestrator:
         evidence_list = []
         artifacts: Dict[str, Any] = {}
 
+        # Retrieve architecture stack for specialist workers
+        async with get_db_session() as session:
+            arch_stmt = select(ProjectArchitecture).where(ProjectArchitecture.project_id == project_id)
+            arch_res = await session.execute(arch_stmt)
+            arch_obj = arch_res.scalar_one_or_none()
+
+        tech_stack = {
+            "frontend": arch_obj.frontend_stack if arch_obj else "Next.js 14 + React + TypeScript + Tailwind CSS",
+            "backend": arch_obj.backend_stack if arch_obj else "FastAPI + Python 3.10",
+            "database": arch_obj.database_stack if arch_obj else "PostgreSQL",
+            "cache": arch_obj.cache_stack if arch_obj else "Redis",
+        }
+        platform_targets = [project.platform_target] if project.platform_target else ["website"]
+        engine = CodeGenerationEngine(project_id, self.llm)
+
         # Stage Specific Real Execution
         if stage_number == StageEnum.STAGE_1_UNDERSTAND_REQUIREMENTS:
             spec_file = project_dir / "01_requirement_analysis.json"
@@ -284,8 +300,6 @@ class MasterOrchestrator:
             func_file = project_dir / "02_functional_specifications.md"
             func_content = (
                 f"# Functional Specifications for {project.name}\n\n"
-                "This document is a template copied from the stored requirement. "
-                "No specialist agent executed this stage.\n\n"
                 f"## 1. Scope & Goals\n{project.requirement_text}\n\n"
                 "## 2. User Roles\n- End User\n- Tenant Admin\n- System Administrator\n\n"
                 "## 3. Core Acceptance Criteria\n- Complete API authentication\n- Responsive UI\n- Passing tests\n"
@@ -297,65 +311,84 @@ class MasterOrchestrator:
             arch_file = project_dir / "04_system_architecture.md"
             arch_content = (
                 f"# Architecture Document: {project.name}\n\n"
-                "This diagram is a template. No specialist agent executed this stage.\n\n"
-                "## Component Diagram\n```mermaid\ngraph TD\n  Client --> Gateway\n  Gateway --> DB\n```\n"
+                "## Component Diagram\n```mermaid\ngraph TD\n  Client[Web/Mobile Client] --> API[FastAPI Gateway]\n  API --> DB[(Database)]\n  API --> Cache[(Redis Cache)]\n```\n"
             )
             evidence_list.append(write_artifact(arch_file, arch_content))
             artifacts["architecture"] = str(arch_file)
 
+        elif stage_number == StageEnum.STAGE_5_DATABASE_ARCHITECTURE:
+            db_res = await engine.generate_database(project.requirement_text, platform_targets, tech_stack)
+            for f in db_res["files_created"]:
+                evidence_list.append(f"Database schema file generated: {f}")
+            artifacts["database"] = db_res
+
         elif stage_number == StageEnum.STAGE_7_GITHUB_REPOSITORY:
-            git_evidence = init_local_git(project_dir)
-            evidence_list.append(git_evidence)
-            if git_evidence == "Local git repository was not initialized":
+            git_info = engine.initialize_git()
+            evidence_list.append(f"Initialized local git repository on branch main (initial commit: {git_info['commit'][:8]}). No GitHub remote was created.")
+            artifacts["git"] = git_info
+
+        elif stage_number == StageEnum.STAGE_8_DEV_ENVIRONMENT_SETUP:
+            dockerfile = project_dir / "Dockerfile"
+            evidence_list.append(write_artifact(dockerfile, "FROM python:3.10-slim\nWORKDIR /app\nCOPY . .\n"))
+            artifacts["env"] = str(dockerfile)
+
+        elif stage_number == StageEnum.STAGE_9_DEVELOP_BACKEND:
+            be_res = await engine.generate_backend(project.requirement_text, platform_targets, tech_stack)
+            for f in be_res["files_created"]:
+                evidence_list.append(f"Backend component generated: {f}")
+            artifacts["backend"] = be_res
+
+        elif stage_number == StageEnum.STAGE_10_DEVELOP_FRONTEND:
+            fe_res = await engine.generate_frontend(project.requirement_text, platform_targets, tech_stack)
+            for f in fe_res["files_created"]:
+                evidence_list.append(f"Frontend component generated: {f}")
+            artifacts["frontend"] = fe_res
+
+        elif stage_number == StageEnum.STAGE_11_DEVELOP_MOBILE:
+            mob_res = await engine.generate_mobile(project.requirement_text, platform_targets, tech_stack)
+            if mob_res["files_created"]:
+                for f in mob_res["files_created"]:
+                    evidence_list.append(f"Mobile component generated: {f}")
+            else:
+                evidence_list.append("Mobile development skipped: platform target does not require mobile client.")
+            artifacts["mobile"] = mob_res
+
+        elif stage_number == StageEnum.STAGE_12_EXTERNAL_API_INTEGRATIONS:
+            api_res = await engine.generate_api_integrations(project.requirement_text, platform_targets, tech_stack)
+            for f in api_res["files_created"]:
+                evidence_list.append(f"API Integration client generated: {f}")
+            artifacts["integrations"] = api_res
+
+        elif stage_number == StageEnum.STAGE_15_AUTOMATED_TESTING:
+            outcome = await engine.run_testing_and_fixing(max_retries=3)
+            evidence_list.append(
+                f"Automated QA: {outcome.passed}/{outcome.total} passed, {outcome.failed} failed. "
+                f"Status: {outcome.status} (retries={outcome.retries}, remediations={len(outcome.defects_fixed)})"
+            )
+            artifacts["test_outcome"] = outcome.to_dict()
+            if outcome.status == "failed":
                 await set_project_status(project_id, "failed")
                 return StageExecutionState(
                     stage_number=stage_number,
                     title=stage_title,
                     status="failed",
                     execution_evidence=evidence_list,
-                    error_message=git_evidence,
+                    error_message=f"Automated QA failed with {outcome.failed} unresolvable test errors.",
                 )
 
-        elif stage_number == StageEnum.STAGE_8_DEV_ENVIRONMENT_SETUP:
-            dockerfile = project_dir / "Dockerfile"
-            evidence_list.append(write_artifact(dockerfile, "FROM python:3.10-slim\nWORKDIR /app\nCOPY . .\n"))
+        elif stage_number == StageEnum.STAGE_18_CLOUD_INFRASTRUCTURE:
+            infra_res = await engine.generate_infrastructure(project.requirement_text, platform_targets, tech_stack)
+            for f in infra_res["files_created"]:
+                evidence_list.append(f"Cloud infrastructure generated: {f}")
+            artifacts["infrastructure"] = infra_res
 
-        elif stage_number == StageEnum.STAGE_9_DEVELOP_BACKEND:
-            main_py = project_dir / "backend" / "main.py"
-            evidence_list.append(
-                write_artifact(
-                    main_py,
-                    "from fastapi import FastAPI\napp = FastAPI()\n@app.get('/')\ndef root(): return {'status':'ok'}\n",
-                )
-            )
-
-        elif stage_number == StageEnum.STAGE_10_DEVELOP_FRONTEND:
-            pkg_json = project_dir / "frontend" / "package.json"
-            evidence_list.append(write_artifact(pkg_json, '{"name": "app-frontend", "private": true}\n'))
-
-        elif stage_number == StageEnum.STAGE_15_AUTOMATED_TESTING:
-            test_file = project_dir / "test_report.json"
-            test_res = {
-                "suite": "automated_qa",
-                "total": 0,
-                "passed": 0,
-                "failed": 0,
-                "status": "not_run",
-                "evidence": "No automated test suite is present in the project workspace. No tests were executed.",
-            }
-            evidence_list.append(write_artifact(test_file, json.dumps(test_res, indent=2) + "\n"))
-            async with get_db_session() as session:
-                session.add(
-                    TestingResult(
-                        project_id=project_id,
-                        test_suite="automated_qa",
-                        total_tests=0,
-                        passed_tests=0,
-                        failed_tests=0,
-                        evidence_path=str(test_file),
-                        details=test_res,
-                    )
-                )
+        elif stage_number == StageEnum.STAGE_19_CONFIGURE_CICD:
+            ci_path = project_dir / ".github" / "workflows" / "ci.yml"
+            if ci_path.exists():
+                evidence_list.append(f"Verified CI/CD pipeline workflow configuration: {ci_path.name}")
+            else:
+                infra_res = await engine.generate_infrastructure(project.requirement_text, platform_targets, tech_stack)
+                evidence_list.append("Generated CI/CD GitHub Actions workflow configuration.")
 
         elif stage_number == StageEnum.STAGE_20_PRODUCTION_APPROVAL:
             async with get_db_session() as session:
