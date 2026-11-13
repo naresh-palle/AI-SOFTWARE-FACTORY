@@ -5,16 +5,21 @@ Security, Cryptography, and Secret Masking Utilities.
 import base64
 import hashlib
 from cryptography.fernet import Fernet
-from factory.core.config import settings
+from factory.core.config import EnvironmentType, settings
 
 
 def _get_fernet_instance() -> Fernet:
-    """Ensure a valid 32-byte urlsafe base64 key is used for Fernet."""
+    """Return a Fernet instance for the configured key.
+
+    Production fails closed when ENCRYPTION_KEY is not a valid Fernet key.
+    Other environments derive a key so local runs still round-trip, and that
+    derivation is not a production secret store.
+    """
     try:
-        key_bytes = settings.ENCRYPTION_KEY.encode()
-        return Fernet(key_bytes)
+        return Fernet(settings.ENCRYPTION_KEY.encode())
     except Exception:
-        # Fallback to deterministic SHA-256 derived 32-byte urlsafe base64 key
+        if settings.ENVIRONMENT == EnvironmentType.PRODUCTION:
+            raise RuntimeError("ENCRYPTION_KEY is not a valid Fernet key") from None
         derived = base64.urlsafe_b64encode(hashlib.sha256(settings.SECRET_KEY.encode()).digest())
         return Fernet(derived)
 

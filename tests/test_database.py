@@ -4,9 +4,10 @@ Tests for Database Schema, Initialization, and Entity CRUD.
 
 import pytest
 from sqlalchemy import select
-from factory.agents.registry import AgentRegistry
+from sqlalchemy.exc import IntegrityError
+from factory.agents.registry import AGENT_CATALOG, AgentRegistry
 from factory.core.database import get_db_session, init_db
-from factory.models.schema import AgentRegistryRecord, Project, User
+from factory.models.schema import AgentRegistryRecord, Project, Task
 
 
 @pytest.mark.asyncio
@@ -52,3 +53,22 @@ async def test_project_crud():
         assert fetched is not None
         assert fetched.name == "Test SaaS App"
         assert fetched.current_stage == 1
+
+
+def test_agent_catalog_is_roles_1_through_97():
+    assert sorted(agent.role_number for agent in AGENT_CATALOG) == list(range(1, 98))
+
+
+@pytest.mark.asyncio
+async def test_sqlite_foreign_keys_reject_orphan_tasks():
+    await init_db()
+    with pytest.raises(IntegrityError):
+        async with get_db_session() as session:
+            session.add(
+                Task(
+                    project_id="missing-project",
+                    stage=1,
+                    agent_name="unit",
+                    title="orphan task",
+                )
+            )

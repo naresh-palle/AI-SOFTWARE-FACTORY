@@ -4,21 +4,18 @@ Controls end-to-end multi-agent execution, dependency resolution,
 stage progression, evidence validation, and approval checkpoints.
 """
 
-import asyncio
-import os
-import time
+import json
+import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from sqlalchemy import select, update
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import desc, select
 
-from factory.agents.base import AgentContext, AgentResult, BaseAgent
 from factory.agents.dynamic_selector import DynamicAgentSelector, ProjectPlan
-from factory.agents.registry import AgentRegistry
 from factory.core.config import settings
 from factory.core.database import get_db_session
 from factory.core.logger import logger
+from factory.core.security import hash_string
 from factory.llm.provider import BaseLLMProvider, get_llm_provider
 from factory.models.schema import (
     ApprovalRecord,
@@ -36,6 +33,50 @@ from factory.orchestrator.state import (
     StageEnum,
     StageExecutionState,
 )
+
+
+def project_workspace(project_id: str) -> Path:
+    """Resolve a project directory and refuse ids that escape the storage root."""
+    if not project_id or project_id in {".", ".."} or project_id != Path(project_id).name:
+        raise ValueError("Invalid project id")
+    root = settings.PROJECTS_STORAGE_DIR.resolve()
+    path = (root / project_id).resolve()
+    if path == root or root not in path.parents:
+        raise ValueError("Invalid project id")
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def write_artifact(path: Path, content: str) -> str:
+    """Write UTF-8 text and return evidence that includes the real SHA-256."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(content.encode("utf-8"))
+    return f"File created: {path.name} (sha256={hash_string(content)})"
+
+
+def init_local_git(project_dir: Path) -> str:
+    """Create a real local git repository. This does not create a GitHub remote."""
+    try:
+        proc = subprocess.run(
+            ["git", "init", "-b", "main"],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return "Local git repository was not initialized"
+    if proc.returncode != 0:
+        return "Local git repository was not initialized"
+    return "Initialized local git repository on branch main. No GitHub remote was created."
+
+
+async def set_project_status(project_id: str, status: str) -> None:
+    async with get_db_session() as session:
+        res = await session.execute(select(Project).where(Project.id == project_id))
+        project = res.scalar_one()
+        project.status = status
 
 
 class MasterOrchestrator:
@@ -109,9 +150,7 @@ class MasterOrchestrator:
             )
             session.add(arch_record)
 
-            # Create project workspace directory
-            project_dir = settings.PROJECTS_STORAGE_DIR / project.id
-            project_dir.mkdir(parents=True, exist_ok=True)
+            project_workspace(project.id)
 
             logger.info(f"Project '{name}' initialized with ID: {project.id}")
             return project
@@ -151,10 +190,15 @@ class MasterOrchestrator:
                 evidences = [t.execution_evidence for t in completed_t if t.execution_evidence]
                 
                 status = "pending"
-                if s_num < project.current_stage:
+                if completed_t:
                     status = "completed"
                 elif s_num == project.current_stage:
-                    status = project.status
+                    if project.status == "awaiting_approval":
+                        status = "blocked_on_approval"
+                    else:
+                        status = project.status
+                elif s_num < project.current_stage:
+                    status = "skipped"
 
                 stages_map[s_num] = StageExecutionState(
                     stage_number=s_num,
@@ -183,6 +227,9 @@ class MasterOrchestrator:
         Execute an individual stage with real deliverables and evidence validation.
         Enforces: NEVER claim an agent completed a task without actual execution evidence.
         """
+        if stage_number not in STAGE_TITLES:
+            raise ValueError(f"Unknown stage {stage_number}")
+
         async with get_db_session() as session:
             stmt = select(Project).where(Project.id == project_id)
             res = await session.execute(stmt)
@@ -212,8 +259,7 @@ class MasterOrchestrator:
             project.status = "in_progress"
             await session.commit()
 
-        project_dir = settings.PROJECTS_STORAGE_DIR / project_id
-        project_dir.mkdir(parents=True, exist_ok=True)
+        project_dir = project_workspace(project.id)
 
         stage_title = STAGE_TITLES.get(stage_number, f"Stage {stage_number}")
         logger.info(f"MasterOrchestrator: Executing Stage {stage_number} - {stage_title} for Project {project_id}")
@@ -229,115 +275,153 @@ class MasterOrchestrator:
                 "project_name": project.name,
                 "analyzed_at": datetime.utcnow().isoformat(),
                 "requirement": project.requirement_text,
-                "status": "VALIDATED"
+                "status": "recorded",
             }
-            spec_file.write_text(str(spec_content), encoding="utf-8")
-            evidence_list.append(f"File created: {spec_file.name} (SHA-256 verified)")
+            evidence_list.append(write_artifact(spec_file, json.dumps(spec_content, indent=2) + "\n"))
             artifacts["spec"] = str(spec_file)
 
         elif stage_number == StageEnum.STAGE_2_FUNCTIONAL_SPECIFICATIONS:
             func_file = project_dir / "02_functional_specifications.md"
             func_content = (
                 f"# Functional Specifications for {project.name}\n\n"
+                "This document is a template copied from the stored requirement. "
+                "No specialist agent executed this stage.\n\n"
                 f"## 1. Scope & Goals\n{project.requirement_text}\n\n"
                 "## 2. User Roles\n- End User\n- Tenant Admin\n- System Administrator\n\n"
                 "## 3. Core Acceptance Criteria\n- Complete API authentication\n- Responsive UI\n- Passing tests\n"
             )
-            func_file.write_text(func_content, encoding="utf-8")
-            evidence_list.append(f"Specification document generated: {func_file.name}")
+            evidence_list.append(write_artifact(func_file, func_content))
             artifacts["functional_spec"] = str(func_file)
 
         elif stage_number == StageEnum.STAGE_4_DESIGN_ARCHITECTURE:
             arch_file = project_dir / "04_system_architecture.md"
             arch_content = (
                 f"# Architecture Document: {project.name}\n\n"
+                "This diagram is a template. No specialist agent executed this stage.\n\n"
                 "## Component Diagram\n```mermaid\ngraph TD\n  Client --> Gateway\n  Gateway --> DB\n```\n"
             )
-            arch_file.write_text(arch_content, encoding="utf-8")
-            evidence_list.append(f"Architecture design delivered: {arch_file.name}")
+            evidence_list.append(write_artifact(arch_file, arch_content))
             artifacts["architecture"] = str(arch_file)
 
         elif stage_number == StageEnum.STAGE_7_GITHUB_REPOSITORY:
-            # Simulate or execute repo initialization
-            git_dir = project_dir / ".git"
-            git_dir.mkdir(parents=True, exist_ok=True)
-            evidence_list.append("Initialized local repository structure and branch 'main'")
+            git_evidence = init_local_git(project_dir)
+            evidence_list.append(git_evidence)
+            if git_evidence == "Local git repository was not initialized":
+                await set_project_status(project_id, "failed")
+                return StageExecutionState(
+                    stage_number=stage_number,
+                    title=stage_title,
+                    status="failed",
+                    execution_evidence=evidence_list,
+                    error_message=git_evidence,
+                )
 
         elif stage_number == StageEnum.STAGE_8_DEV_ENVIRONMENT_SETUP:
             dockerfile = project_dir / "Dockerfile"
-            dockerfile.write_text("FROM python:3.10-slim\nWORKDIR /app\nCOPY . .\n", encoding="utf-8")
-            evidence_list.append(f"Created container specification: {dockerfile.name}")
+            evidence_list.append(write_artifact(dockerfile, "FROM python:3.10-slim\nWORKDIR /app\nCOPY . .\n"))
 
         elif stage_number == StageEnum.STAGE_9_DEVELOP_BACKEND:
-            app_dir = project_dir / "backend"
-            app_dir.mkdir(parents=True, exist_ok=True)
-            main_py = app_dir / "main.py"
-            main_py.write_text("from fastapi import FastAPI\napp = FastAPI()\n@app.get('/')\ndef root(): return {'status':'ok'}\n", encoding="utf-8")
-            evidence_list.append(f"FastAPI application scaffolded: {main_py.name}")
+            main_py = project_dir / "backend" / "main.py"
+            evidence_list.append(
+                write_artifact(
+                    main_py,
+                    "from fastapi import FastAPI\napp = FastAPI()\n@app.get('/')\ndef root(): return {'status':'ok'}\n",
+                )
+            )
 
         elif stage_number == StageEnum.STAGE_10_DEVELOP_FRONTEND:
-            fe_dir = project_dir / "frontend"
-            fe_dir.mkdir(parents=True, exist_ok=True)
-            pkg_json = fe_dir / "package.json"
-            pkg_json.write_text('{"name": "app-frontend", "private": true}\n', encoding="utf-8")
-            evidence_list.append(f"Next.js frontend package created: {pkg_json.name}")
+            pkg_json = project_dir / "frontend" / "package.json"
+            evidence_list.append(write_artifact(pkg_json, '{"name": "app-frontend", "private": true}\n'))
 
         elif stage_number == StageEnum.STAGE_15_AUTOMATED_TESTING:
             test_file = project_dir / "test_report.json"
             test_res = {
                 "suite": "automated_qa",
-                "total": 10,
-                "passed": 10,
+                "total": 0,
+                "passed": 0,
                 "failed": 0,
-                "evidence": "All 10 tests passed in 230ms"
+                "status": "not_run",
+                "evidence": "No automated test suite is present in the project workspace. No tests were executed.",
             }
-            test_file.write_text(str(test_res), encoding="utf-8")
-            evidence_list.append(f"QA test suite completed: 10/10 tests passed ({test_file.name})")
-
-            # Store in DB
+            evidence_list.append(write_artifact(test_file, json.dumps(test_res, indent=2) + "\n"))
             async with get_db_session() as session:
-                tr = TestingResult(
-                    project_id=project_id,
-                    test_suite="automated_qa",
-                    total_tests=10,
-                    passed_tests=10,
-                    failed_tests=0,
-                    evidence_path=str(test_file)
+                session.add(
+                    TestingResult(
+                        project_id=project_id,
+                        test_suite="automated_qa",
+                        total_tests=0,
+                        passed_tests=0,
+                        failed_tests=0,
+                        evidence_path=str(test_file),
+                        details=test_res,
+                    )
                 )
-                session.add(tr)
 
         elif stage_number == StageEnum.STAGE_20_PRODUCTION_APPROVAL:
-            # Human approval checkpoint
             async with get_db_session() as session:
-                app_check = ApprovalRecord(
-                    project_id=project_id,
-                    stage=20,
-                    action_type="production_deploy",
-                    description="Approval requested for final production release deployment.",
-                    status="pending"
+                latest_stmt = (
+                    select(ApprovalRecord)
+                    .where(
+                        ApprovalRecord.project_id == project_id,
+                        ApprovalRecord.stage == stage_number,
+                        ApprovalRecord.action_type == "production_deploy",
+                    )
+                    .order_by(desc(ApprovalRecord.created_at))
                 )
-                session.add(app_check)
-                await session.flush()
-                evidence_list.append(f"Approval request registered with ID: {app_check.id}")
+                latest = (await session.execute(latest_stmt)).scalars().first()
+                if latest is None:
+                    latest = ApprovalRecord(
+                        project_id=project_id,
+                        stage=stage_number,
+                        action_type="production_deploy",
+                        description="Approval requested for final production release deployment.",
+                        status="pending",
+                    )
+                    session.add(latest)
+                    await session.flush()
+                decision = latest.status
+                approval_id = latest.id
+                project_row = (
+                    await session.execute(select(Project).where(Project.id == project_id))
+                ).scalar_one()
+                if decision == "approved":
+                    evidence_list.append(f"Production approval {approval_id} is approved")
+                elif decision == "rejected":
+                    project_row.status = "failed"
+                    evidence_list.append(f"Production approval {approval_id} is rejected")
+                else:
+                    project_row.status = "awaiting_approval"
+                    project_row.current_stage = stage_number
+                    evidence_list.append(f"Approval request registered with ID: {approval_id}")
 
-            return StageExecutionState(
-                stage_number=stage_number,
-                title=stage_title,
-                status="blocked_on_approval",
-                execution_evidence=evidence_list,
-                error_message="Production deployment gate requires explicit approval."
-            )
+            if decision == "rejected":
+                return StageExecutionState(
+                    stage_number=stage_number,
+                    title=stage_title,
+                    status="failed",
+                    execution_evidence=evidence_list,
+                    error_message="Production deployment was rejected.",
+                )
+            if decision != "approved":
+                return StageExecutionState(
+                    stage_number=stage_number,
+                    title=stage_title,
+                    status="blocked_on_approval",
+                    execution_evidence=evidence_list,
+                    error_message="Production deployment gate requires explicit approval.",
+                )
 
         elif stage_number == StageEnum.STAGE_23_FINAL_DOCUMENTATION:
             doc_file = project_dir / "FINAL_DOCUMENTATION.md"
-            doc_file.write_text(f"# Project Documentation for {project.name}\nGenerated automatically.\n", encoding="utf-8")
-            evidence_list.append(f"Documentation compiled: {doc_file.name}")
+            evidence_list.append(
+                write_artifact(doc_file, f"# Project Documentation for {project.name}\nGenerated automatically.\n")
+            )
 
         else:
-            # Generic stage execution with real file evidence
             stage_out = project_dir / f"stage_{stage_number:02d}_deliverable.txt"
-            stage_out.write_text(f"Executed stage {stage_number}: {stage_title} for {project.name}\n", encoding="utf-8")
-            evidence_list.append(f"Stage deliverable created: {stage_out.name}")
+            evidence_list.append(
+                write_artifact(stage_out, f"Executed stage {stage_number}: {stage_title} for {project.name}\n")
+            )
 
         # Update Project & State in DB
         async with get_db_session() as session:

@@ -4,6 +4,7 @@ Evaluates requirements, compares tech options, estimates costs, and selects
 the exact required subset of specialist agents.
 """
 
+import re
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 from factory.agents.registry import AGENT_CATALOG, AgentMetadata
@@ -37,6 +38,15 @@ class ProjectPlan(BaseModel):
     mermaid_architecture: str = ""
 
 
+def contains_term(text: str, term: str) -> bool:
+    """Match a keyword on word boundaries so 'application' does not match 'app'."""
+    return re.search(rf"\b{re.escape(term.lower())}\b", text) is not None
+
+
+def contains_any(text: str, terms: List[str]) -> bool:
+    return any(contains_term(text, term) for term in terms)
+
+
 class DynamicAgentSelector:
     """Evaluates software requirements and dynamically determines tech stack & agent assignments."""
 
@@ -56,13 +66,13 @@ class DynamicAgentSelector:
         if user_platform_target and user_platform_target not in ("auto", "fullstack", "combined"):
             platforms.append(user_platform_target)
         else:
-            has_mobile = any(k in req_lower for k in ["mobile", "android", "ios", "react native", "phone", "app"])
-            has_web = any(k in req_lower for k in ["web", "website", "dashboard", "portal", "store", "commerce", "saas", "frontend"]) or not has_mobile
+            has_mobile = contains_any(req_lower, ["mobile", "android", "ios", "react native", "phone", "app"])
+            has_web = contains_any(req_lower, ["web", "website", "dashboard", "portal", "store", "commerce", "saas", "frontend"]) or not has_mobile
             if has_web:
                 platforms.append("website")
-            if has_mobile or "android" in req_lower:
+            if has_mobile or contains_term(req_lower, "android"):
                 platforms.append("mobile_android")
-            if has_mobile or "ios" in req_lower or "iphone" in req_lower:
+            if has_mobile or contains_term(req_lower, "ios") or contains_term(req_lower, "iphone"):
                 platforms.append("mobile_ios")
 
         # 2. Technology Selection Analysis
@@ -82,7 +92,7 @@ class DynamicAgentSelector:
         backend_rationale = "High-performance asynchronous Python backend with automatic OpenAPI schema generation."
 
         # Database selection
-        is_relational = any(k in req_lower for k in ["relational", "financial", "payment", "e-commerce", "ecommerce", "order", "invoice", "bank", "sql", "acid"])
+        is_relational = contains_any(req_lower, ["relational", "financial", "payment", "e-commerce", "ecommerce", "order", "invoice", "bank", "sql", "acid"])
         if is_relational:
             database = "PostgreSQL"
             db_rationale = "ACID-compliant relational integrity with JSONB capability for complex transactions and catalog items."
@@ -91,13 +101,13 @@ class DynamicAgentSelector:
             db_rationale = "Flexible document schema for rapid iteration on unstructured or evolving content."
 
         # Cache selection
-        needs_cache = any(k in req_lower for k in ["cache", "session", "high traffic", "realtime", "chat", "streaming", "scale", "redis"])
+        needs_cache = contains_any(req_lower, ["cache", "session", "high traffic", "realtime", "chat", "streaming", "scale", "redis"])
         cache = "Redis" if needs_cache or is_relational else None
         cache_rationale = "In-memory caching, rate-limiting counters, and pub/sub message brokering." if cache else "Direct database queries sufficient for initial workload."
 
         # Payments
         payments = None
-        needs_payment = any(k in req_lower for k in ["pay", "payment", "checkout", "subscription", "stripe", "razorpay", "billing", "cart"])
+        needs_payment = contains_any(req_lower, ["pay", "payment", "checkout", "subscription", "stripe", "razorpay", "billing", "cart"])
         if needs_payment:
             payments = "Stripe & Razorpay Multi-Gateway"
             payments_rationale = "Global credit card support via Stripe plus regional UPI/Netbanking via Razorpay."
@@ -197,19 +207,19 @@ class DynamicAgentSelector:
 
         # Social & External APIs
         api_deps: List[str] = []
-        if any(k in req_lower for k in ["meta", "facebook", "instagram", "whatsapp"]):
+        if contains_any(req_lower, ["meta", "facebook", "instagram", "whatsapp"]):
             selected_numbers.extend([33, 34, 35, 36])
             api_deps.append("Meta Graph API (Facebook, Instagram, WhatsApp)")
-        if "youtube" in req_lower:
+        if contains_term(req_lower, "youtube"):
             selected_numbers.append(40)
             api_deps.append("YouTube Data API v3")
-        if any(k in req_lower for k in ["twitter", "x api"]):
+        if contains_any(req_lower, ["twitter", "x api"]):
             selected_numbers.append(41)
             api_deps.append("X API v2")
-        if "google" in req_lower:
+        if contains_term(req_lower, "google"):
             selected_numbers.extend([39, 50])
             api_deps.append("Google APIs & Google OAuth")
-        if any(k in req_lower for k in ["email", "mail", "notification"]):
+        if contains_any(req_lower, ["email", "mail", "notification"]):
             selected_numbers.append(45)
             api_deps.append("SendGrid / AWS SES Email API")
 

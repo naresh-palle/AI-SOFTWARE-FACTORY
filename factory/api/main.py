@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from factory.api.routes import router
-from factory.core.config import settings
+from factory.core.config import enforce_production_secrets, settings
 from factory.core.database import get_db_session, init_db
 from factory.agents.registry import AgentRegistry
 from factory.core.logger import logger
@@ -15,6 +15,7 @@ from factory.core.logger import logger
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: Initialize database tables and sync 97 agent definitions
+    enforce_production_secrets(settings.ENVIRONMENT, settings.SECRET_KEY, settings.ENCRYPTION_KEY)
     logger.info("Initializing Factory Database and Agent Catalog...")
     await init_db()
     async with get_db_session() as session:
@@ -36,7 +37,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
