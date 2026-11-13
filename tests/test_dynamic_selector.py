@@ -41,3 +41,20 @@ async def test_dynamic_selection_social_meta():
     assert "Instagram API Agent" in plan.selected_agent_roles
     assert "WhatsApp Business API Agent" in plan.selected_agent_roles
     assert any("Meta" in dep for dep in plan.api_dependencies)
+
+
+@pytest.mark.asyncio
+async def test_selector_ignores_keyword_substrings():
+    selector = DynamicAgentSelector()
+    plan = await selector.analyze_and_select(
+        "Build a document management application that maps payloads to archival storage.",
+        "fullstack",
+    )
+    assert plan.platform_targets == ["website"]
+    assert plan.technology_stack.mobile is None
+    assert plan.technology_stack.payments is None
+    assert "Payment Gateway Agent" not in plan.selected_agent_roles
+    assert "React Native Developer Agent" not in plan.selected_agent_roles
+
+    metadata = await selector.analyze_and_select("Export metadata from the catalog.", "website")
+    assert "Meta Developer Agent" not in metadata.selected_agent_roles

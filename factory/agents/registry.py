@@ -865,7 +865,7 @@ class AgentRegistry:
                 )
                 session.add(record)
                 created_count += 1
-        await session.commit()
+        await session.flush()
         if created_count > 0:
             logger.info(f"Synchronized {created_count} agents to database registry.")
         return created_count

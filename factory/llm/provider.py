@@ -171,9 +171,9 @@ class OllamaProvider(BaseLLMProvider):
                     model_name=self.model,
                     provider="ollama"
                 )
-        except Exception as e:
-            logger.warning(f"Ollama call failed ({e}), falling back to Mock provider")
-            return await MockLLMProvider().generate(prompt, system_prompt, json_mode, temperature)
+        except Exception as exc:
+            logger.warning("Ollama call failed (%s)", exc.__class__.__name__)
+            raise RuntimeError("Ollama provider request failed") from exc
 
 
 class OpenAIProvider(BaseLLMProvider):
@@ -240,8 +240,10 @@ def get_llm_provider(name: Optional[str] = None) -> BaseLLMProvider:
     provider_name = (name or settings.DEFAULT_LLM_PROVIDER).lower()
     if provider_name == "ollama":
         return OllamaProvider()
-    elif provider_name == "openai":
+    if provider_name == "openai":
         return OpenAIProvider()
-    elif provider_name == "mock":
+    if provider_name == "mock":
         return MockLLMProvider()
-    return MockLLMProvider()
+    raise ValueError(
+        f"Unsupported LLM provider '{provider_name}'. Configured providers: mock, ollama, openai."
+    )
