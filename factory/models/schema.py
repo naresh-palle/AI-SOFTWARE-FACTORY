@@ -1,0 +1,340 @@
+"""
+Centralized Factory Database Schema.
+Defines all entities required for the Autonomous AI Software Development Factory.
+"""
+
+import uuid
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+from sqlalchemy import (
+    Boolean,
+    Column,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    JSON,
+    String,
+    Table,
+    Text,
+)
+from sqlalchemy.orm import DeclarativeBase, relationship
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+def generate_uuid() -> str:
+    return str(uuid.uuid4())
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    email = Column(String(255), unique=True, nullable=False, index=True)
+    full_name = Column(String(255), nullable=True)
+    role = Column(String(50), default="developer")  # admin, architect, developer
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    projects = relationship("Project", back_populates="owner")
+    approvals = relationship("ApprovalRecord", back_populates="approver")
+
+
+class Project(Base):
+    __tablename__ = "projects"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    name = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    requirement_text = Column(Text, nullable=False)
+    platform_target = Column(String(100), default="fullstack")  # website, android, ios, combined, fullstack
+    execution_mode = Column(String(50), default="autonomous")  # assisted, semi-autonomous, autonomous
+    status = Column(String(50), default="initialized")  # initialized, planning, in_progress, awaiting_approval, completed, failed
+    current_stage = Column(Integer, default=1)  # 1 to 23
+    owner_id = Column(String(36), ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    owner = relationship("User", back_populates="projects")
+    requirements = relationship("ProjectRequirement", back_populates="project", cascade="all, delete-orphan")
+    architecture = relationship("ProjectArchitecture", back_populates="project", uselist=False, cascade="all, delete-orphan")
+    tasks = relationship("Task", back_populates="project", cascade="all, delete-orphan")
+    executions = relationship("AgentExecutionHistory", back_populates="project", cascade="all, delete-orphan")
+    repo = relationship("GitHubRepositoryRecord", back_populates="project", uselist=False, cascade="all, delete-orphan")
+    integrations = relationship("ExternalIntegration", back_populates="project", cascade="all, delete-orphan")
+    test_results = relationship("TestingResult", back_populates="project", cascade="all, delete-orphan")
+    security_findings = relationship("SecurityFinding", back_populates="project", cascade="all, delete-orphan")
+    deployments = relationship("DeploymentHistory", back_populates="project", cascade="all, delete-orphan")
+    approvals = relationship("ApprovalRecord", back_populates="project", cascade="all, delete-orphan")
+    costs = relationship("CostRecord", back_populates="project", cascade="all, delete-orphan")
+    audit_logs = relationship("AuditLog", back_populates="project", cascade="all, delete-orphan")
+
+
+class ProjectRequirement(Base):
+    __tablename__ = "project_requirements"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=False, index=True)
+    raw_requirement = Column(Text, nullable=False)
+    functional_specs = Column(JSON, default=dict)
+    business_objectives = Column(JSON, default=list)
+    identified_features = Column(JSON, default=list)
+    constraints = Column(JSON, default=dict)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    project = relationship("Project", back_populates="requirements")
+
+
+class ProjectArchitecture(Base):
+    __tablename__ = "project_architectures"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=False, unique=True)
+    frontend_stack = Column(String(255), nullable=True)
+    backend_stack = Column(String(255), nullable=True)
+    mobile_stack = Column(String(255), nullable=True)
+    database_stack = Column(String(255), nullable=True)
+    cache_stack = Column(String(255), nullable=True)
+    cloud_stack = Column(String(255), nullable=True)
+    ci_cd_stack = Column(String(255), nullable=True)
+    selected_agents = Column(JSON, default=list)
+    mermaid_diagram = Column(Text, nullable=True)
+    estimated_cost_usd = Column(Float, default=0.0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    project = relationship("Project", back_populates="architecture")
+
+
+class AgentRegistryRecord(Base):
+    __tablename__ = "agent_registry"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    role_number = Column(Integer, unique=True, nullable=False)  # 1 to 97
+    name = Column(String(100), unique=True, nullable=False)
+    role_title = Column(String(150), nullable=False)
+    category = Column(String(100), nullable=False)  # Product, UI/UX, Backend, Database, Social/API, Auth, Security, DevOps, QA, Maintenance
+    description = Column(Text, nullable=False)
+    capabilities = Column(JSON, default=list)
+    is_active = Column(Boolean, default=True)
+
+
+class AgentConfiguration(Base):
+    __tablename__ = "agent_configurations"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=False)
+    agent_name = Column(String(100), nullable=False)
+    model_provider = Column(String(50), default="default")
+    model_name = Column(String(100), nullable=True)
+    system_prompt_override = Column(Text, nullable=True)
+    parameters = Column(JSON, default=dict)
+
+
+class Task(Base):
+    __tablename__ = "tasks"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=False, index=True)
+    stage = Column(Integer, nullable=False)
+    agent_name = Column(String(100), nullable=False)
+    title = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    status = Column(String(50), default="pending")  # pending, in_progress, completed, failed, blocked
+    input_payload = Column(JSON, default=dict)
+    output_payload = Column(JSON, default=dict)
+    execution_evidence = Column(Text, nullable=True)  # File path, commit SHA, test run ID
+    started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+
+    project = relationship("Project", back_populates="tasks")
+    dependencies = relationship(
+        "TaskDependency",
+        foreign_keys="TaskDependency.task_id",
+        back_populates="task",
+        cascade="all, delete-orphan",
+    )
+
+
+class TaskDependency(Base):
+    __tablename__ = "task_dependencies"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    task_id = Column(String(36), ForeignKey("tasks.id"), nullable=False)
+    depends_on_task_id = Column(String(36), ForeignKey("tasks.id"), nullable=False)
+
+    task = relationship("Task", foreign_keys=[task_id], back_populates="dependencies")
+
+
+class AgentExecutionHistory(Base):
+    __tablename__ = "agent_execution_history"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=False, index=True)
+    task_id = Column(String(36), ForeignKey("tasks.id"), nullable=True)
+    agent_name = Column(String(100), nullable=False)
+    status = Column(String(50), nullable=False)
+    latency_ms = Column(Integer, default=0)
+    input_tokens = Column(Integer, default=0)
+    output_tokens = Column(Integer, default=0)
+    evidence_log = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    project = relationship("Project", back_populates="executions")
+
+
+class GitHubRepositoryRecord(Base):
+    __tablename__ = "github_repositories"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=False, unique=True)
+    repo_name = Column(String(255), nullable=False)
+    repo_url = Column(String(500), nullable=False)
+    default_branch = Column(String(100), default="main")
+    current_branch = Column(String(100), default="main")
+    latest_commit_hash = Column(String(100), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    project = relationship("Project", back_populates="repo")
+
+
+class ExternalIntegration(Base):
+    __tablename__ = "external_integrations"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=False)
+    provider = Column(String(100), nullable=False)  # meta, youtube, x, stripe, aws, etc.
+    integration_type = Column(String(100), nullable=False)
+    config_json = Column(JSON, default=dict)
+    is_active = Column(Boolean, default=True)
+
+    project = relationship("Project", back_populates="integrations")
+
+
+class DeveloperAccountReference(Base):
+    __tablename__ = "developer_account_references"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    account_type = Column(String(50), nullable=False)  # factory_owner, tenant_customer
+    platform = Column(String(50), nullable=False)  # meta, google, x, aws
+    account_identifier = Column(String(255), nullable=False)
+    encrypted_credentials = Column(Text, nullable=True)
+    permissions = Column(JSON, default=list)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class OAuthConnection(Base):
+    __tablename__ = "oauth_connections"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    tenant_id = Column(String(100), nullable=False, index=True)
+    provider = Column(String(50), nullable=False)  # facebook, google, x, linkedin, tiktok
+    user_identifier = Column(String(255), nullable=False)
+    encrypted_access_token = Column(Text, nullable=False)
+    encrypted_refresh_token = Column(Text, nullable=True)
+    token_expires_at = Column(DateTime, nullable=True)
+    granted_scopes = Column(JSON, default=list)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class WebhookSubscription(Base):
+    __tablename__ = "webhook_subscriptions"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=False)
+    platform = Column(String(50), nullable=False)
+    callback_url = Column(String(500), nullable=False)
+    verify_token = Column(String(255), nullable=False)
+    is_active = Column(Boolean, default=True)
+
+
+class TestingResult(Base):
+    __tablename__ = "testing_results"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=False)
+    test_suite = Column(String(100), nullable=False)  # unit, api, integration, ui, performance, security
+    total_tests = Column(Integer, default=0)
+    passed_tests = Column(Integer, default=0)
+    failed_tests = Column(Integer, default=0)
+    evidence_path = Column(String(500), nullable=True)
+    details = Column(JSON, default=dict)
+    executed_at = Column(DateTime, default=datetime.utcnow)
+
+    project = relationship("Project", back_populates="test_results")
+
+
+class SecurityFinding(Base):
+    __tablename__ = "security_findings"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=False)
+    severity = Column(String(50), nullable=False)  # low, medium, high, critical
+    title = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    tool = Column(String(100), default="factory_scanner")  # trivy, sonarqube, bandit
+    remediation_status = Column(String(50), default="open")  # open, fixed, accepted_risk
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    project = relationship("Project", back_populates="security_findings")
+
+
+class DeploymentHistory(Base):
+    __tablename__ = "deployment_history"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=False)
+    environment = Column(String(50), nullable=False)  # dev, staging, prod
+    status = Column(String(50), nullable=False)  # success, failed, pending
+    commit_sha = Column(String(100), nullable=True)
+    endpoint_url = Column(String(500), nullable=True)
+    logs = Column(Text, nullable=True)
+    deployed_at = Column(DateTime, default=datetime.utcnow)
+
+    project = relationship("Project", back_populates="deployments")
+
+
+class ApprovalRecord(Base):
+    __tablename__ = "approval_records"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=False)
+    stage = Column(Integer, nullable=False)
+    action_type = Column(String(100), nullable=False)  # paid_service, production_deploy, legal_declaration, etc.
+    description = Column(Text, nullable=False)
+    status = Column(String(50), default="pending")  # pending, approved, rejected
+    approver_id = Column(String(36), ForeignKey("users.id"), nullable=True)
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    decided_at = Column(DateTime, nullable=True)
+
+    project = relationship("Project", back_populates="approvals")
+    approver = relationship("User", back_populates="approvals")
+
+
+class CostRecord(Base):
+    __tablename__ = "cost_records"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=False)
+    category = Column(String(100), nullable=False)  # llm_tokens, cloud_infra, third_party_api
+    amount_usd = Column(Float, nullable=False)
+    details = Column(JSON, default=dict)
+    recorded_at = Column(DateTime, default=datetime.utcnow)
+
+    project = relationship("Project", back_populates="costs")
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=True)
+    action = Column(String(100), nullable=False)
+    actor = Column(String(100), nullable=False)
+    details_json = Column(JSON, default=dict)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    project = relationship("Project", back_populates="audit_logs")
