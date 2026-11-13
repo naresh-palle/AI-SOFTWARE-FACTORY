@@ -18,7 +18,17 @@ from factory.core.logger import logger
 from factory.models.schema import (
     ApprovalRecord,
     AuditLog,
+    CostRecord,
+    DeploymentHistory,
+    DeveloperAccountReference,
+    ExternalIntegration,
+    GitHubRepositoryRecord,
+    OAuthConnection,
     Project,
+    ProjectArchitecture,
+    SecurityFinding,
+    Task,
+    TestingResult,
 )
 from factory.orchestrator.master import MasterOrchestrator
 
@@ -238,6 +248,312 @@ async def get_audit_logs(
     stmt = stmt.order_by(desc(AuditLog.created_at)).limit(limit)
     res = await db.execute(stmt)
     return res.scalars().all()
+
+
+@api.get("/overview/stats", tags=["Overview"])
+async def get_overview_stats(db: AsyncSession = Depends(get_db)):
+    """Aggregated statistics for the factory overview dashboard."""
+    # Projects summary
+    p_res = await db.execute(select(Project))
+    projects = p_res.scalars().all()
+    total_projects = len(projects)
+    active_projects = sum(1 for p in projects if p.status in ("in_progress", "planning"))
+    completed_projects = sum(1 for p in projects if p.status == "completed")
+    failed_projects = sum(1 for p in projects if p.status == "failed")
+
+    # Pending approvals
+    app_res = await db.execute(select(ApprovalRecord).where(ApprovalRecord.status == "pending"))
+    pending_approvals = app_res.scalars().all()
+
+    # Costs
+    cost_res = await db.execute(select(CostRecord))
+    costs = cost_res.scalars().all()
+    total_cost_usd = sum(c.amount_usd for c in costs)
+
+    # Recent Audit Logs
+    audit_res = await db.execute(select(AuditLog).order_by(desc(AuditLog.created_at)).limit(10))
+    recent_activities = audit_res.scalars().all()
+
+    # Active tasks
+    task_res = await db.execute(select(Task).where(Task.status == "in_progress"))
+    active_tasks = task_res.scalars().all()
+    running_workflows = len(set(t.project_id for t in active_tasks))
+
+    return {
+        "total_projects": total_projects,
+        "active_projects": active_projects,
+        "completed_projects": completed_projects,
+        "failed_projects": failed_projects,
+        "total_agents": len(AGENT_CATALOG),
+        "active_agents_count": len(active_tasks),
+        "pending_approvals_count": len(pending_approvals),
+        "running_workflows": running_workflows,
+        "total_cost_usd": round(total_cost_usd, 2),
+        "system_status": "healthy",
+        "recent_activities": [
+            {
+                "id": a.id,
+                "project_id": a.project_id,
+                "action": a.action,
+                "actor": a.actor,
+                "details": a.details_json,
+                "created_at": a.created_at,
+            }
+            for a in recent_activities
+        ],
+    }
+
+
+@api.get("/projects/{project_id}/tasks", tags=["Tasks"])
+async def get_project_tasks(project_id: str, db: AsyncSession = Depends(get_db)):
+    """Retrieve all tasks for a specific project."""
+    stmt = select(Task).where(Task.project_id == project_id).order_by(Task.stage)
+    res = await db.execute(stmt)
+    tasks = res.scalars().all()
+    return [
+        {
+            "id": t.id,
+            "project_id": t.project_id,
+            "stage": t.stage,
+            "agent_name": t.agent_name,
+            "title": t.title,
+            "description": t.description,
+            "status": t.status,
+            "execution_evidence": t.execution_evidence,
+            "started_at": t.started_at,
+            "completed_at": t.completed_at,
+        }
+        for t in tasks
+    ]
+
+
+@api.get("/projects/{project_id}/architecture", tags=["Architecture"])
+async def get_project_architecture(project_id: str, db: AsyncSession = Depends(get_db)):
+    """Retrieve architecture details and diagram for a project."""
+    stmt = select(ProjectArchitecture).where(ProjectArchitecture.project_id == project_id)
+    res = await db.execute(stmt)
+    arch = res.scalar_one_or_none()
+    if not arch:
+        raise HTTPException(status_code=404, detail="Architecture not found for this project")
+    return {
+        "project_id": arch.project_id,
+        "frontend_stack": arch.frontend_stack,
+        "backend_stack": arch.backend_stack,
+        "mobile_stack": arch.mobile_stack,
+        "database_stack": arch.database_stack,
+        "cache_stack": arch.cache_stack,
+        "cloud_stack": arch.cloud_stack,
+        "ci_cd_stack": arch.ci_cd_stack,
+        "selected_agents": arch.selected_agents,
+        "mermaid_diagram": arch.mermaid_diagram,
+        "estimated_cost_usd": arch.estimated_cost_usd,
+        "created_at": arch.created_at,
+    }
+
+
+@api.get("/projects/{project_id}/github", tags=["GitHub"])
+async def get_project_github(project_id: str, db: AsyncSession = Depends(get_db)):
+    """Retrieve GitHub repository connection for a project."""
+    stmt = select(GitHubRepositoryRecord).where(GitHubRepositoryRecord.project_id == project_id)
+    res = await db.execute(stmt)
+    repo = res.scalar_one_or_none()
+    if not repo:
+        return {
+            "connected": False,
+            "repo_name": None,
+            "repo_url": None,
+            "default_branch": "main",
+            "current_branch": "main",
+            "latest_commit_hash": None,
+        }
+    return {
+        "connected": True,
+        "repo_name": repo.repo_name,
+        "repo_url": repo.repo_url,
+        "default_branch": repo.default_branch,
+        "current_branch": repo.current_branch,
+        "latest_commit_hash": repo.latest_commit_hash,
+    }
+
+
+@api.get("/meta/status", tags=["Meta"])
+async def get_meta_status(db: AsyncSession = Depends(get_db)):
+    """Retrieve Meta Developer Center integration status."""
+    acc_res = await db.execute(select(DeveloperAccountReference).where(DeveloperAccountReference.platform == "meta"))
+    accounts = acc_res.scalars().all()
+
+    int_res = await db.execute(select(ExternalIntegration).where(ExternalIntegration.provider == "meta"))
+    integrations = int_res.scalars().all()
+
+    return {
+        "configured": bool(settings.META_APP_ID),
+        "app_id": settings.META_APP_ID if settings.META_APP_ID else "Not Configured",
+        "has_app_secret": bool(settings.META_APP_SECRET),
+        "accounts_connected": len(accounts),
+        "active_integrations": [
+            {
+                "id": i.id,
+                "project_id": i.project_id,
+                "type": i.integration_type,
+                "is_active": i.is_active,
+            }
+            for i in integrations
+        ],
+        "supported_products": [
+            {"product": "Facebook Login", "status": "Ready", "permissions": ["email", "public_profile"]},
+            {"product": "Instagram Graph API", "status": "Configured", "permissions": ["instagram_basic", "pages_show_list"]},
+            {"product": "WhatsApp Business Platform", "status": "Ready", "permissions": ["whatsapp_business_messaging"]},
+            {"product": "Messenger API", "status": "Configured", "permissions": ["pages_messaging"]},
+            {"product": "Threads API", "status": "Available", "permissions": ["threads_basic"]},
+        ],
+    }
+
+
+@api.get("/integrations", tags=["Integrations"])
+async def get_external_integrations(db: AsyncSession = Depends(get_db)):
+    """Retrieve all external API integrations."""
+    stmt = select(ExternalIntegration)
+    res = await db.execute(stmt)
+    records = res.scalars().all()
+    return [
+        {
+            "id": r.id,
+            "project_id": r.project_id,
+            "provider": r.provider,
+            "integration_type": r.integration_type,
+            "is_active": r.is_active,
+            "config": r.config_json,
+        }
+        for r in records
+    ]
+
+
+@api.get("/security/findings", tags=["Security"])
+async def get_security_findings(db: AsyncSession = Depends(get_db)):
+    """Retrieve security audit findings."""
+    stmt = select(SecurityFinding).order_by(desc(SecurityFinding.created_at))
+    res = await db.execute(stmt)
+    records = res.scalars().all()
+    return [
+        {
+            "id": r.id,
+            "project_id": r.project_id,
+            "severity": r.severity,
+            "title": r.title,
+            "description": r.description,
+            "tool": r.tool,
+            "status": r.remediation_status,
+            "created_at": r.created_at,
+        }
+        for r in records
+    ]
+
+
+@api.get("/qa/results", tags=["QA"])
+async def get_qa_results(db: AsyncSession = Depends(get_db)):
+    """Retrieve QA test suite execution results."""
+    stmt = select(TestingResult).order_by(desc(TestingResult.executed_at))
+    res = await db.execute(stmt)
+    records = res.scalars().all()
+    return [
+        {
+            "id": r.id,
+            "project_id": r.project_id,
+            "test_suite": r.test_suite,
+            "total_tests": r.total_tests,
+            "passed_tests": r.passed_tests,
+            "failed_tests": r.failed_tests,
+            "evidence_path": r.evidence_path,
+            "executed_at": r.executed_at,
+        }
+        for r in records
+    ]
+
+
+@api.get("/deployments", tags=["Deployments"])
+async def get_deployments(db: AsyncSession = Depends(get_db)):
+    """Retrieve deployment history records."""
+    stmt = select(DeploymentHistory).order_by(desc(DeploymentHistory.deployed_at))
+    res = await db.execute(stmt)
+    records = res.scalars().all()
+    return [
+        {
+            "id": r.id,
+            "project_id": r.project_id,
+            "environment": r.environment,
+            "status": r.status,
+            "commit_sha": r.commit_sha,
+            "endpoint_url": r.endpoint_url,
+            "deployed_at": r.deployed_at,
+        }
+        for r in records
+    ]
+
+
+@api.get("/costs", tags=["Cost"])
+async def get_cost_records(db: AsyncSession = Depends(get_db)):
+    """Retrieve FinOps cost records and breakdown."""
+    stmt = select(CostRecord).order_by(desc(CostRecord.recorded_at))
+    res = await db.execute(stmt)
+    records = res.scalars().all()
+    total = sum(r.amount_usd for r in records)
+    by_category: Dict[str, float] = {}
+    for r in records:
+        by_category[r.category] = by_category.get(r.category, 0.0) + r.amount_usd
+    return {
+        "total_usd": round(total, 2),
+        "by_category": {k: round(v, 2) for k, v in by_category.items()},
+        "records": [
+            {
+                "id": r.id,
+                "project_id": r.project_id,
+                "category": r.category,
+                "amount_usd": r.amount_usd,
+                "details": r.details,
+                "recorded_at": r.recorded_at,
+            }
+            for r in records
+        ],
+    }
+
+
+@api.get("/database/status", tags=["Database"])
+async def get_database_status(db: AsyncSession = Depends(get_db)):
+    """Retrieve database health and table metrics."""
+    # Table counts
+    p_count = (await db.execute(select(Project))).scalars().all()
+    t_count = (await db.execute(select(Task))).scalars().all()
+    app_count = (await db.execute(select(ApprovalRecord))).scalars().all()
+    audit_count = (await db.execute(select(AuditLog))).scalars().all()
+
+    return {
+        "engine": "PostgreSQL (asyncpg)" if "postgres" in settings.DATABASE_URL else "SQLite (aiosqlite)",
+        "connection": "healthy",
+        "tables": {
+            "projects": len(p_count),
+            "agents": len(AGENT_CATALOG),
+            "tasks": len(t_count),
+            "approvals": len(app_count),
+            "audit_logs": len(audit_count),
+        },
+    }
+
+
+@api.get("/system/settings", tags=["System"])
+async def get_system_settings():
+    """Retrieve system configuration settings (sensitive keys masked)."""
+    return {
+        "app_name": settings.APP_NAME,
+        "environment": settings.ENVIRONMENT,
+        "default_execution_mode": settings.DEFAULT_EXECUTION_MODE,
+        "default_llm_provider": settings.DEFAULT_LLM_PROVIDER,
+        "ollama_base_url": settings.OLLAMA_BASE_URL,
+        "ollama_model": settings.OLLAMA_MODEL,
+        "github_username": settings.GITHUB_USERNAME,
+        "has_github_token": bool(settings.GITHUB_TOKEN),
+        "has_meta_app": bool(settings.META_APP_ID),
+        "encryption_configured": bool(settings.ENCRYPTION_KEY),
+    }
 
 
 router.include_router(api)

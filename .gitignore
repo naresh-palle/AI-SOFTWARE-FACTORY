@@ -40,3 +40,8 @@ logs/
 
 # Workspaces
 workspace_projects/
+
+# Node & Next.js
+dashboard/node_modules/
+dashboard/.next/
+dashboard/out/

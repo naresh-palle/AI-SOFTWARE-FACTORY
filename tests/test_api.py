@@ -108,6 +108,32 @@ async def test_production_without_operator_token_is_unavailable(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_dashboard_supporting_endpoints():
+    await init_db()
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # Overview stats
+        r1 = await client.get("/api/v1/overview/stats")
+        assert r1.status_code == 200
+        stats = r1.json()
+        assert "total_projects" in stats
+        assert stats["total_agents"] == 97
+
+        # System settings
+        r2 = await client.get("/api/v1/system/settings")
+        assert r2.status_code == 200
+        settings_data = r2.json()
+        assert settings_data["app_name"] == "Autonomous AI Software Development Factory"
+
+        # Database status
+        r3 = await client.get("/api/v1/database/status")
+        assert r3.status_code == 200
+        db_data = r3.json()
+        assert db_data["connection"] == "healthy"
+        assert db_data["tables"]["agents"] == 97
+
+
+@pytest.mark.asyncio
 async def test_approval_decision_is_recorded_once():
     await init_db()
     orchestrator = MasterOrchestrator()
