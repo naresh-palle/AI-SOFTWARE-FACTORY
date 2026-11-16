@@ -6,13 +6,14 @@ and executes an autonomous bug-fixing loop (max 3 retries) with defect logging.
 
 import json
 import re
-import sys
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from factory.core.database import get_db_session
 from factory.core.logger import logger
 from factory.generator.github_service import GitHubAutomationService
+from factory.generator.repairs import apply_repair
+from factory.generator.sandbox import DockerExecutionSandbox, SandboxResult
 from factory.generator.workspace import WorkspaceManager
 from factory.llm.provider import BaseLLMProvider, get_llm_provider
 from factory.models.schema import TestingResult
@@ -61,24 +62,12 @@ class AutomatedTestingEngine:
         self.workspace = workspace
         self.github = github_service
         self.llm = llm_provider or get_llm_provider()
+        self.sandbox = DockerExecutionSandbox()
 
-    def _execute_pytest(self) -> Tuple[int, str]:
-        """Run pytest inside the project's backend directory using python3 in WSL."""
-        # Check if tests directory exists
-        test_dir = self.workspace.resolve_path("backend/tests")
-        if not test_dir.exists():
-            return 0, "No tests found in backend/tests."
-
-        # Execute pytest with PYTHONPATH=backend
-        python_bin = sys.executable  # Current virtualenv python
-        env = {"PYTHONPATH": str(self.workspace.resolve_path("backend"))}
-        
-        cmd = [python_bin, "-m", "pytest", "backend/tests", "-v"]
-        rc, out, err = self.workspace.run_command(cmd, env=env, timeout_seconds=45)
-        combined = f"{out}\n{err}".strip()
-        if rc != 0:
-            logger.error(f"TestingEngine: pytest execution failed with exit code {rc}:\nSTDOUT: {out}\nSTDERR: {err}")
-        return rc, combined
+    def _execute_pytest(self) -> Tuple[int, str, str]:
+        """Run pytest in the Docker sandbox. Generated code is not started on the host."""
+        result: SandboxResult = self.sandbox.run_backend_tests(self.workspace)
+        return result.returncode, result.output, result.status
 
     def _parse_pytest_output(self, output: str) -> Tuple[int, int, int]:
         """Extract total, passed, and failed test counts from pytest stdout."""
@@ -97,29 +86,19 @@ class AutomatedTestingEngine:
         total = passed + failed
         return total, passed, failed
 
-    async def _attempt_bug_fix(self, failure_trace: str, attempt: int) -> bool:
-        """
-        Autonomous bug-fixing handler (Logical Agent #89: Bug Fixing Agent).
-        Analyzes stack trace and modifies files to resolve test failures.
-        """
-        logger.warning(f"TestingEngine: Triggering Bug Fixing Agent (Attempt {attempt}) for project {self.workspace.project_id}")
-        
-        # Create or switch to bugfix branch
+    async def _attempt_bug_fix(self, failure_trace: str, attempt: int) -> Optional[str]:
+        """Apply one known repair on an isolated branch. Return None when no edit is safe."""
+        logger.warning(f"TestingEngine: repair attempt {attempt} for project {self.workspace.project_id}")
         bugfix_branch = f"bugfix/test-failures-attempt-{attempt}"
         self.github.create_branch(bugfix_branch)
-
-        # Inspect failure for common patterns or trigger LLM patch
-        fix_applied = False
-        if "assert" in failure_trace or "Error" in failure_trace:
-            # Analyze backend/app/main.py or backend/app/api/
-            # For demonstration and deterministic self-healing:
-            # Check if any import error or missing mock occurred
-            logger.info("Bug Fixing Agent analyzing traceback and applying patch...")
-            # If there's an import or status issue, patch backend/app/main.py or test
-            fix_applied = True
-            self.github.commit_changes(f"fix: automated defect remediation by Bug Fixing Agent (attempt {attempt})")
-
-        return fix_applied
+        repair = apply_repair(self.workspace, failure_trace)
+        if repair is None:
+            self.workspace.activate(self.workspace.workspace_path)
+            self.github._remove_worktree(bugfix_branch)
+            return None
+        self.github.commit_changes(f"fix: {repair}")
+        self.github.merge_pull_request(bugfix_branch)
+        return repair
 
     async def run_testing_and_fixing_loop(
         self,
@@ -133,10 +112,20 @@ class AutomatedTestingEngine:
         defects_fixed: List[str] = []
 
         while attempt <= max_retries:
-            rc, output = self._execute_pytest()
+            rc, output, sandbox_status = self._execute_pytest()
             total, passed, failed = self._parse_pytest_output(output)
 
-            # If no tests were discovered, mark as not_run
+            if sandbox_status in {"unavailable", "timed_out", "rejected"}:
+                return TestRunOutcome(
+                    total=0,
+                    passed=0,
+                    failed=0,
+                    status=sandbox_status,
+                    output=output,
+                    retries=attempt,
+                    defects_fixed=defects_fixed,
+                )
+
             if total == 0 and rc == 0:
                 logger.info("TestingEngine: No formal tests found in workspace; status=not_run.")
                 return TestRunOutcome(total=0, passed=0, failed=0, status="not_run", output=output)
@@ -154,10 +143,8 @@ class AutomatedTestingEngine:
                     defects_fixed=defects_fixed,
                 )
 
-            # Tests failed
             logger.warning(f"TestingEngine: Tests failed on attempt {attempt}: {failed}/{total} failed (exit {rc}).")
             if attempt >= max_retries:
-                logger.error(f"TestingEngine: Exhausted {max_retries} bug-fixing attempts. Failing test stage.")
                 return TestRunOutcome(
                     total=total,
                     passed=passed,
@@ -168,11 +155,19 @@ class AutomatedTestingEngine:
                     defects_fixed=defects_fixed,
                 )
 
-            # Perform fix
             attempt += 1
-            defect_summary = f"Defect in attempt {attempt}: {failed} tests failed"
-            defects_fixed.append(defect_summary)
-            await self._attempt_bug_fix(output, attempt)
+            repair = await self._attempt_bug_fix(output, attempt)
+            if repair is None:
+                return TestRunOutcome(
+                    total=total,
+                    passed=passed,
+                    failed=failed,
+                    status="failed",
+                    output=output,
+                    retries=attempt,
+                    defects_fixed=defects_fixed,
+                )
+            defects_fixed.append(repair)
 
         return TestRunOutcome(
             total=total,

@@ -92,7 +92,27 @@ class DynamicAgentSelector:
         backend_rationale = "High-performance asynchronous Python backend with automatic OpenAPI schema generation."
 
         # Database selection
-        is_relational = contains_any(req_lower, ["relational", "financial", "payment", "e-commerce", "ecommerce", "order", "invoice", "bank", "sql", "acid"])
+        is_relational = contains_any(
+            req_lower,
+            [
+                "relational",
+                "financial",
+                "payment",
+                "e-commerce",
+                "ecommerce",
+                "order",
+                "invoice",
+                "bank",
+                "sql",
+                "acid",
+                "postgresql",
+                "postgres",
+                "employee",
+                "employees",
+                "staff",
+                "payroll",
+            ],
+        )
         if is_relational:
             database = "PostgreSQL"
             db_rationale = "ACID-compliant relational integrity with JSONB capability for complex transactions and catalog items."
@@ -204,6 +224,10 @@ class DynamicAgentSelector:
         # Payments
         if payments:
             selected_numbers.append(44)  # Payment Gateway Agent
+        if contains_any(req_lower, ["employee", "employees", "staff", "rbac", "role", "roles"]):
+            selected_numbers.append(54)  # RBAC Agent
+        if contains_any(req_lower, ["facebook", "oauth"]):
+            selected_numbers.append(51)  # Facebook Login Agent
 
         # Social & External APIs
         api_deps: List[str] = []

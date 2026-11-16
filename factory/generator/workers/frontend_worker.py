@@ -4,6 +4,7 @@ Generates complete Next.js 14 / React / TypeScript / Tailwind CSS applications.
 """
 
 import json
+import re
 from typing import Any, Dict, List, Optional
 from factory.core.logger import logger
 from factory.generator.workers.base_worker import BaseWorker, WorkerResult
@@ -32,12 +33,18 @@ class FrontendWorker(BaseWorker):
 
         p_lower = requirement_text.lower()
         is_ecommerce = any(k in p_lower for k in ["ecommerce", "e-commerce", "shop", "cart", "product", "stripe", "payment"])
-        is_social = any(k in p_lower for k in ["social", "analytics", "youtube", "facebook", "instagram", "meta", "post", "follower"])
+        is_social = any(
+            re.search(rf"\b{re.escape(term)}\b", p_lower)
+            for term in ("social", "analytics", "youtube", "facebook", "instagram", "meta", "post", "follower")
+        )
+        is_employee = any(re.search(rf"\b{term}\b", p_lower) for term in ("employee", "employees", "staff", "payroll"))
         app_title = "Modern Web Application"
         if is_ecommerce:
             app_title = "NextStore E-Commerce"
         elif is_social:
             app_title = "PulseMetric Social Analytics"
+        elif is_employee:
+            app_title = "Employee Directory"
 
         files_created: List[str] = []
 
@@ -66,7 +73,8 @@ class FrontendWorker(BaseWorker):
                 "@types/react": "^18.3.0",
                 "@types/react-dom": "^18.3.0",
                 "postcss": "^8.4.0",
-                "tailwindcss": "^3.4.0"
+                "tailwindcss": "^3.4.0",
+                "autoprefixer": "^10.4.0"
             }
         }
         f, _ = self.workspace.write_file("frontend/package.json", json.dumps(pkg_json, indent=2) + "\n")
@@ -231,7 +239,7 @@ class FrontendWorker(BaseWorker):
             "    <header className=\"border-b border-slate-200 bg-white/80 backdrop-blur sticky top-0 z-50\">\n"
             "      <div className=\"max-w-7xl mx-auto px-4 h-16 flex items-center justify-between\">\n"
             f"        <Link href=\"/\" className=\"text-xl font-bold text-slate-900\">{app_title}</Link>\n"
-            "        <nav className=\"flex items-center gap-6 text-sm font-medium text-slate-600\">\n"
+            "        <nav className=\"hidden md:flex items-center gap-6 text-sm font-medium text-slate-600\">\n"
             "          <Link href=\"/\" className=\"hover:text-primary-600 transition\">Home</Link>\n"
             + (
                 "          <Link href=\"/products\" className=\"hover:text-primary-600 transition\">Products</Link>\n"
@@ -240,10 +248,34 @@ class FrontendWorker(BaseWorker):
                 "          <Link href=\"/analytics\" className=\"hover:text-primary-600 transition\">Analytics</Link>\n"
                 "          <Link href=\"/channels\" className=\"hover:text-primary-600 transition\">Channels</Link>\n"
                 if is_social else
+                "          <Link href=\"/dashboard\" className=\"hover:text-primary-600 transition\">Dashboard</Link>\n"
+                "          <Link href=\"/employees\" className=\"hover:text-primary-600 transition\">Employees</Link>\n"
+                if is_employee else
+                "          <Link href=\"/about\" className=\"hover:text-primary-600 transition\">About</Link>\n"
                 "          <Link href=\"/services\" className=\"hover:text-primary-600 transition\">Services</Link>\n"
                 "          <Link href=\"/contact\" className=\"hover:text-primary-600 transition\">Contact</Link>\n"
             ) +
             "        </nav>\n"
+            "        <details className=\"md:hidden relative\">\n"
+            "          <summary className=\"cursor-pointer text-sm font-medium text-slate-700\">Menu</summary>\n"
+            "          <div className=\"absolute right-0 mt-2 w-44 rounded-lg border border-slate-200 bg-white p-3 flex flex-col gap-2 text-sm\">\n"
+            "            <Link href=\"/\">Home</Link>\n"
+            + (
+                "            <Link href=\"/products\">Products</Link>\n"
+                "            <Link href=\"/cart\">Cart</Link>\n"
+                if is_ecommerce else
+                "            <Link href=\"/analytics\">Analytics</Link>\n"
+                "            <Link href=\"/channels\">Channels</Link>\n"
+                if is_social else
+                "            <Link href=\"/dashboard\">Dashboard</Link>\n"
+                "            <Link href=\"/employees\">Employees</Link>\n"
+                if is_employee else
+                "            <Link href=\"/about\">About</Link>\n"
+                "            <Link href=\"/services\">Services</Link>\n"
+                "            <Link href=\"/contact\">Contact</Link>\n"
+            ) +
+            "          </div>\n"
+            "        </details>\n"
             "      </div>\n"
             "    </header>\n"
             "  );\n"
@@ -310,6 +342,8 @@ class FrontendWorker(BaseWorker):
                 if is_ecommerce else
                 "          <Link href=\"/analytics\" className=\"px-6 py-3 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 shadow\">View Dashboard</Link>\n"
                 if is_social else
+                "          <Link href=\"/dashboard\" className=\"px-6 py-3 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 shadow\">Open Dashboard</Link>\n"
+                if is_employee else
                 "          <Link href=\"/services\" className=\"px-6 py-3 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 shadow\">Explore Services</Link>\n"
             ) +
             "        </div>\n"
@@ -415,6 +449,7 @@ class FrontendWorker(BaseWorker):
                 "            <div className=\"text-3xl font-black text-slate-900\">{m.followers.toLocaleString()} <span className=\"text-xs text-slate-500 font-normal\">Followers</span></div>\n"
                 "            <div className=\"text-sm text-slate-600\">Engagement: <strong>{m.engagement_rate}%</strong></div>\n"
                 "            <div className=\"text-sm text-slate-600\">30-Day Views: <strong>{m.views_last_30d.toLocaleString()}</strong></div>\n"
+                "            <p className=\"text-xs text-slate-500\">Local sample. No social account is connected.</p>\n"
                 "          </div>\n"
                 "        ))}\n"
                 "      </div>\n"
@@ -424,6 +459,110 @@ class FrontendWorker(BaseWorker):
             )
             self.workspace.write_file("frontend/src/app/analytics/page.tsx", analytics_page)
             files_created.append("frontend/src/app/analytics/page.tsx")
+        elif is_employee:
+            dashboard_page = (
+                "import React from 'react';\n"
+                "import Link from 'next/link';\n\n"
+                "export default function DashboardPage() {\n"
+                "  return (\n"
+                "    <section className=\"space-y-4\">\n"
+                "      <h1 className=\"text-3xl font-bold text-slate-900\">Employee dashboard</h1>\n"
+                "      <p className=\"text-slate-600\">Sign in with an administrator or manager account to manage the directory.</p>\n"
+                "      <Link href=\"/employees\" className=\"inline-block px-4 py-2 bg-blue-600 text-white rounded-lg\">Open directory</Link>\n"
+                "    </section>\n"
+                "  );\n"
+                "}\n"
+            )
+            employees_page = (
+                "import React from 'react';\n\n"
+                "export default function EmployeesPage() {\n"
+                "  return (\n"
+                "    <section className=\"space-y-4\">\n"
+                "      <h1 className=\"text-3xl font-bold text-slate-900\">Employees</h1>\n"
+                "      <p className=\"text-slate-600\">The directory is served by the FastAPI /api/v1/employees routes. Administrator accounts can create, update, and delete records. Employee accounts can read the directory.</p>\n"
+                "    </section>\n"
+                "  );\n"
+                "}\n"
+            )
+            self.workspace.write_file("frontend/src/app/dashboard/page.tsx", dashboard_page)
+            self.workspace.write_file("frontend/src/app/employees/page.tsx", employees_page)
+            files_created.extend(["frontend/src/app/dashboard/page.tsx", "frontend/src/app/employees/page.tsx"])
+        else:
+            about_page = (
+                "import React from 'react';\n\n"
+                "export default function AboutPage() {\n"
+                "  return (\n"
+                "    <section className=\"max-w-3xl space-y-4\">\n"
+                "      <h1 className=\"text-3xl font-bold text-slate-900\">About</h1>\n"
+                "      <p className=\"text-slate-600\">We design and deliver practical services for growing businesses, with a team that stays with the work from the first conversation through launch.</p>\n"
+                "    </section>\n"
+                "  );\n"
+                "}\n"
+            )
+            services_page = (
+                "import React from 'react';\n\n"
+                "const SERVICES = ['Discovery workshops', 'Experience design', 'Implementation support'];\n\n"
+                "export default function ServicesPage() {\n"
+                "  return (\n"
+                "    <section className=\"space-y-6\">\n"
+                "      <h1 className=\"text-3xl font-bold text-slate-900\">Services</h1>\n"
+                "      <div className=\"grid md:grid-cols-3 gap-4\">\n"
+                "        {SERVICES.map((service) => (\n"
+                "          <article key={service} className=\"rounded-xl border border-slate-200 bg-white p-5\">\n"
+                "            <h2 className=\"font-semibold text-slate-900\">{service}</h2>\n"
+                "          </article>\n"
+                "        ))}\n"
+                "      </div>\n"
+                "    </section>\n"
+                "  );\n"
+                "}\n"
+            )
+            contact_page = (
+                "\"use client\";\n\n"
+                "import React, { useState } from 'react';\n\n"
+                "export default function ContactPage() {\n"
+                "  const [result, setResult] = useState('');\n"
+                "  async function onSubmit(event: React.FormEvent<HTMLFormElement>) {\n"
+                "    event.preventDefault();\n"
+                "    const form = new FormData(event.currentTarget);\n"
+                "    try {\n"
+                "      const response = await fetch((process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000') + '/api/v1/services/inquiry', {\n"
+                "        method: 'POST',\n"
+                "        headers: { 'Content-Type': 'application/json' },\n"
+                "        body: JSON.stringify({ name: form.get('name'), email: form.get('email'), message: form.get('message') }),\n"
+                "      });\n"
+                "      if (!response.ok) {\n"
+                "        setResult('The contact service rejected the inquiry.');\n"
+                "        return;\n"
+                "      }\n"
+                "      const data = await response.json();\n"
+                "      setResult(data.message);\n"
+                "    } catch {\n"
+                "      setResult('The contact service is not reachable.');\n"
+                "    }\n"
+                "  }\n"
+                "  return (\n"
+                "    <section className=\"max-w-xl space-y-4\">\n"
+                "      <h1 className=\"text-3xl font-bold text-slate-900\">Contact</h1>\n"
+                "      <form onSubmit={onSubmit} className=\"space-y-3\">\n"
+                "        <label className=\"block text-sm font-medium text-slate-700\">Name<input name=\"name\" required className=\"mt-1 w-full rounded-lg border border-slate-300 p-2\" /></label>\n"
+                "        <label className=\"block text-sm font-medium text-slate-700\">Email<input name=\"email\" type=\"email\" required className=\"mt-1 w-full rounded-lg border border-slate-300 p-2\" /></label>\n"
+                "        <label className=\"block text-sm font-medium text-slate-700\">Message<textarea name=\"message\" required className=\"mt-1 w-full rounded-lg border border-slate-300 p-2\" /></label>\n"
+                "        <button type=\"submit\" className=\"rounded-lg bg-blue-600 px-4 py-2 text-white\">Send message</button>\n"
+                "      </form>\n"
+                "      {result ? <p role=\"status\">{result}</p> : null}\n"
+                "    </section>\n"
+                "  );\n"
+                "}\n"
+            )
+            self.workspace.write_file("frontend/src/app/about/page.tsx", about_page)
+            self.workspace.write_file("frontend/src/app/services/page.tsx", services_page)
+            self.workspace.write_file("frontend/src/app/contact/page.tsx", contact_page)
+            files_created.extend([
+                "frontend/src/app/about/page.tsx",
+                "frontend/src/app/services/page.tsx",
+                "frontend/src/app/contact/page.tsx",
+            ])
 
         # Commit to feature branch
         commit_sha = self.github.commit_changes(

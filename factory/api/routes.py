@@ -2,6 +2,7 @@
 FastAPI Routes for Autonomous AI Software Development Factory.
 """
 
+import json
 import secrets
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -357,22 +358,41 @@ async def get_project_github(project_id: str, db: AsyncSession = Depends(get_db)
     stmt = select(GitHubRepositoryRecord).where(GitHubRepositoryRecord.project_id == project_id)
     res = await db.execute(stmt)
     repo = res.scalar_one_or_none()
-    if not repo:
-        return {
-            "connected": False,
-            "repo_name": None,
-            "repo_url": None,
-            "default_branch": "main",
-            "current_branch": "main",
-            "latest_commit_hash": None,
-        }
+    repo_url = repo.repo_url if repo else None
+    connected = bool(repo_url and str(repo_url).startswith("https://github.com/"))
+    pull_requests: List[Dict[str, Any]] = []
+    latest_commit = repo.latest_commit_hash if repo else None
+    storage = settings.PROJECTS_STORAGE_DIR.resolve()
+    candidate = (storage / project_id).resolve()
+    root = candidate if candidate != storage and storage in candidate.parents and candidate.is_dir() else None
+    if root is not None:
+        pr_file = root / "pull_requests.json"
+        if pr_file.is_file():
+            loaded = json.loads(pr_file.read_text(encoding="utf-8"))
+            if isinstance(loaded, list):
+                pull_requests = loaded
+        if latest_commit is None and (root / ".git").exists():
+            import subprocess
+
+            proc = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=root,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+            if proc.returncode == 0:
+                latest_commit = proc.stdout.strip()
     return {
-        "connected": True,
-        "repo_name": repo.repo_name,
-        "repo_url": repo.repo_url,
-        "default_branch": repo.default_branch,
-        "current_branch": repo.current_branch,
-        "latest_commit_hash": repo.latest_commit_hash,
+        "connected": connected,
+        "repo_name": repo.repo_name if repo else None,
+        "repo_url": repo_url if connected else None,
+        "local_repo": None if connected else repo_url,
+        "default_branch": repo.default_branch if repo else "main",
+        "current_branch": repo.current_branch if repo else "main",
+        "latest_commit_hash": latest_commit,
+        "pull_requests": pull_requests,
     }
 
 

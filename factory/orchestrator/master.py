@@ -16,12 +16,14 @@ from factory.core.config import settings
 from factory.core.database import get_db_session
 from factory.core.logger import logger
 from factory.core.security import hash_string
-from factory.generator.engine import CodeGenerationEngine
+from factory.generator.engine import CodeGenerationEngine, github_publication_enabled
 from factory.llm.provider import BaseLLMProvider, get_llm_provider
 from factory.models.schema import (
     ApprovalRecord,
     AuditLog,
     CostRecord,
+    DeploymentHistory,
+    GitHubRepositoryRecord,
     Project,
     ProjectArchitecture,
     ProjectRequirement,
@@ -307,6 +309,26 @@ class MasterOrchestrator:
             evidence_list.append(write_artifact(func_file, func_content))
             artifacts["functional_spec"] = str(func_file)
 
+        elif stage_number == StageEnum.STAGE_3_RESEARCH_TECHNOLOGIES_APIS:
+            selector = DynamicAgentSelector()
+            plan = await selector.analyze_and_select(project.requirement_text)
+            written = engine.write_development_plan(
+                project.requirement_text,
+                plan.platform_targets,
+                {
+                    "frontend": plan.technology_stack.frontend,
+                    "backend": plan.technology_stack.backend,
+                    "database": plan.technology_stack.database,
+                    "mobile": plan.technology_stack.mobile,
+                    "payments": plan.technology_stack.payments,
+                },
+                plan.selected_agent_roles,
+            )
+            evidence_list.append(
+                f"Development plan recorded {len(written['selected_agents'])} agents and database {written['technology']['database']}."
+            )
+            artifacts["development_plan"] = str(project_dir / "03_development_plan.json")
+
         elif stage_number == StageEnum.STAGE_4_DESIGN_ARCHITECTURE:
             arch_file = project_dir / "04_system_architecture.md"
             arch_content = (
@@ -322,10 +344,44 @@ class MasterOrchestrator:
                 evidence_list.append(f"Database schema file generated: {f}")
             artifacts["database"] = db_res
 
+        elif stage_number == StageEnum.STAGE_6_UI_UX_DESIGNS:
+            design_file = project_dir / "06_interface_plan.md"
+            design = (
+                f"# Interface plan for {project.name}\n\n"
+                f"Requirement: {project.requirement_text}\n\n"
+                "Frontend worker: Next.js, React, TypeScript, and Tailwind CSS.\n"
+                "Mobile worker runs only when the requirement or platform asks for a mobile client.\n"
+            )
+            evidence_list.append(write_artifact(design_file, design))
+            artifacts["interface_plan"] = str(design_file)
+
         elif stage_number == StageEnum.STAGE_7_GITHUB_REPOSITORY:
-            git_info = engine.initialize_git()
-            evidence_list.append(f"Initialized local git repository on branch main (initial commit: {git_info['commit'][:8]}). No GitHub remote was created.")
-            artifacts["git"] = git_info
+            git_info = engine.initialize_git(publish=github_publication_enabled())
+            remote = str(git_info.get("repo_url") or "")
+            if remote.startswith("https://github.com/"):
+                evidence_list.append(f"Created GitHub repository {remote}.")
+            else:
+                evidence_list.append(
+                    f"Initialized local git repository on branch main (initial commit: {git_info['commit'][:8]}). "
+                    "No GitHub remote was created."
+                )
+            artifacts["git"] = {
+                "branch": git_info.get("branch"),
+                "commit": git_info.get("commit"),
+                "remote_created": bool(git_info.get("remote_created")),
+                "repo_url": remote,
+            }
+            async with get_db_session() as session:
+                session.add(
+                    GitHubRepositoryRecord(
+                        project_id=project_id,
+                        repo_name=str(git_info.get("repo_name") or f"local-{project_id[:8]}"),
+                        repo_url=remote or f"local://{project_id}",
+                        default_branch="main",
+                        current_branch="main",
+                        latest_commit_hash=git_info.get("commit"),
+                    )
+                )
 
         elif stage_number == StageEnum.STAGE_8_DEV_ENVIRONMENT_SETUP:
             dockerfile = project_dir / "Dockerfile"
@@ -358,6 +414,48 @@ class MasterOrchestrator:
             for f in api_res["files_created"]:
                 evidence_list.append(f"API Integration client generated: {f}")
             artifacts["integrations"] = api_res
+            paid_files = [
+                path
+                for path in api_res["files_created"]
+                if any(name in path for name in ("payment_gateway.py", "meta_client.py", "youtube_client.py"))
+            ]
+            if paid_files:
+                async with get_db_session() as session:
+                    session.add(
+                        ApprovalRecord(
+                            project_id=project_id,
+                            stage=stage_number,
+                            action_type="paid_service",
+                            description="Live calls to payment or social APIs require human approval and were not executed.",
+                            status="pending",
+                        )
+                    )
+                evidence_list.append("Recorded a pending approval for live external API calls. No live call was made.")
+
+        elif stage_number == StageEnum.STAGE_13_AUTHENTICATION:
+            auth_file = project_dir / "backend" / "app" / "api" / "auth.py"
+            if auth_file.is_file():
+                evidence_list.append("Verified generated authentication module backend/app/api/auth.py.")
+            else:
+                evidence_list.append("Authentication module was not generated for this requirement.")
+            artifacts["authentication"] = str(auth_file)
+
+        elif stage_number == StageEnum.STAGE_14_SECURITY_CONTROLS:
+            findings = await engine.run_security_scan()
+            blocking = [item for item in findings if item.get("blocking")]
+            evidence_list.append(
+                f"Security scan recorded {len(findings)} findings, {len(blocking)} blocking."
+            )
+            artifacts["security"] = str(project_dir / "security_report.json")
+            if blocking:
+                await set_project_status(project_id, "failed")
+                return StageExecutionState(
+                    stage_number=stage_number,
+                    title=stage_title,
+                    status="failed",
+                    execution_evidence=evidence_list,
+                    error_message="Security scan found blocking secrets in the generated workspace.",
+                )
 
         elif stage_number == StageEnum.STAGE_15_AUTOMATED_TESTING:
             outcome = await engine.run_testing_and_fixing(max_retries=3)
@@ -366,14 +464,55 @@ class MasterOrchestrator:
                 f"Status: {outcome.status} (retries={outcome.retries}, remediations={len(outcome.defects_fixed)})"
             )
             artifacts["test_outcome"] = outcome.to_dict()
-            if outcome.status == "failed":
+            if outcome.status in {"failed", "unavailable", "timed_out", "rejected"}:
                 await set_project_status(project_id, "failed")
                 return StageExecutionState(
                     stage_number=stage_number,
                     title=stage_title,
                     status="failed",
                     execution_evidence=evidence_list,
-                    error_message=f"Automated QA failed with {outcome.failed} unresolvable test errors.",
+                    error_message=(
+                        f"Automated QA finished with status {outcome.status}. "
+                        "Generated tests were not marked passed."
+                    ),
+                )
+
+        elif stage_number == StageEnum.STAGE_16_FIX_DEFECTS:
+            report_path = project_dir / "test_report.json"
+            prior_status = "not_run"
+            if report_path.is_file():
+                prior_status = json.loads(report_path.read_text(encoding="utf-8")).get("status", "not_run")
+            if prior_status == "failed":
+                outcome = await engine.run_testing_and_fixing(max_retries=2)
+                evidence_list.append(
+                    f"Bug fix loop status {outcome.status}; repairs: {len(outcome.defects_fixed)}."
+                )
+                if outcome.status in {"failed", "unavailable", "timed_out", "rejected"}:
+                    await set_project_status(project_id, "failed")
+                    return StageExecutionState(
+                        stage_number=stage_number,
+                        title=stage_title,
+                        status="failed",
+                        execution_evidence=evidence_list,
+                        error_message=f"Bug fixing stopped with status {outcome.status}.",
+                    )
+            else:
+                evidence_list.append(f"No open test failure to repair. Last status: {prior_status}.")
+
+        elif stage_number == StageEnum.STAGE_17_REGRESSION_TESTING:
+            outcome = await engine.run_testing_and_fixing(max_retries=0)
+            evidence_list.append(
+                f"Regression run status {outcome.status}: {outcome.passed} passed, {outcome.failed} failed."
+            )
+            artifacts["regression"] = outcome.to_dict()
+            if outcome.status in {"failed", "unavailable", "timed_out", "rejected"}:
+                await set_project_status(project_id, "failed")
+                return StageExecutionState(
+                    stage_number=stage_number,
+                    title=stage_title,
+                    status="failed",
+                    execution_evidence=evidence_list,
+                    error_message=f"Regression testing finished with status {outcome.status}.",
                 )
 
         elif stage_number == StageEnum.STAGE_18_CLOUD_INFRASTRUCTURE:
@@ -442,6 +581,22 @@ class MasterOrchestrator:
                     status="blocked_on_approval",
                     execution_evidence=evidence_list,
                     error_message="Production deployment gate requires explicit approval.",
+                )
+
+        elif stage_number == StageEnum.STAGE_21_DEPLOYMENT:
+            deployment = engine.prepare_deployment()
+            evidence_list.append("Deployment plan written. Infrastructure was not applied and no production deploy ran.")
+            artifacts["deployment_plan"] = str(project_dir / "deployment_plan.json")
+            async with get_db_session() as session:
+                session.add(
+                    DeploymentHistory(
+                        project_id=project_id,
+                        environment="production",
+                        status="prepared",
+                        commit_sha=None,
+                        endpoint_url=None,
+                        logs=json.dumps(deployment),
+                    )
                 )
 
         elif stage_number == StageEnum.STAGE_23_FINAL_DOCUMENTATION:

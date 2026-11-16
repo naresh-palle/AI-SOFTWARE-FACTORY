@@ -81,6 +81,8 @@ async def test_case_a_basic_business_website():
     assert "frontend/src/app/page.tsx" in fe_res["files_created"]
     assert "frontend/src/components/Navbar.tsx" in fe_res["files_created"]
     assert (engine.workspace.workspace_path / "frontend" / "package.json").exists()
+    package_json = json.loads((engine.workspace.workspace_path / "frontend" / "package.json").read_text(encoding="utf-8"))
+    assert "autoprefixer" in package_json["devDependencies"]
 
     # Generate Backend
     be_res = await engine.generate_backend(req_text, ["website"], {})
@@ -229,3 +231,127 @@ async def test_end_to_end_orchestrator_pipeline_with_code_engine():
     assert (ws_dir / "frontend" / "package.json").exists()
     assert (ws_dir / "test_report.json").exists()
     assert (ws_dir / "docker-compose.yml").exists()
+
+
+@pytest.mark.asyncio
+async def test_requirements_select_different_stacks_and_agents():
+    from factory.agents.dynamic_selector import DynamicAgentSelector
+
+    selector = DynamicAgentSelector()
+    website = await selector.analyze_and_select(
+        "Modern corporate website for an architectural consulting firm with portfolio and contact form."
+    )
+    commerce = await selector.analyze_and_select(
+        "Full-stack e-commerce marketplace for luxury sneakers with customer authentication, product catalog, cart, and Stripe payment gateway."
+    )
+    social = await selector.analyze_and_select(
+        "Creator metrics and social media analytics platform integrating Meta Graph API (Facebook and Instagram) and YouTube Data API v3 with cross-platform mobile app."
+    )
+
+    assert commerce.technology_stack.database == "PostgreSQL"
+    assert commerce.technology_stack.payments
+    assert website.technology_stack.payments is None
+    assert social.technology_stack.database == "MongoDB"
+    assert "Payment Gateway Agent" in commerce.selected_agent_roles
+    assert "Payment Gateway Agent" not in website.selected_agent_roles
+    assert "Meta Developer Agent" in social.selected_agent_roles
+    assert "Meta Developer Agent" not in website.selected_agent_roles
+    assert set(commerce.selected_agent_roles) != set(social.selected_agent_roles)
+
+
+def test_commit_refuses_blocked_secret_without_echoing_it():
+    project_id = "secret-guard-01"
+    workspace = WorkspaceManager(project_id)
+    git = GitHubAutomationService(workspace)
+    git.init_repository()
+    git.create_branch("feature/secret")
+    workspace.write_file("config.py", "AWS_KEY = 'AKIAIOSFODNN7EXAMPLE'\n")
+    with pytest.raises(RuntimeError) as exc:
+        git.commit_changes("feat: add configuration")
+    message = str(exc.value)
+    assert "config.py" in message
+    assert "AKIAIOSFODNN7EXAMPLE" not in message
+
+
+@pytest.mark.asyncio
+async def test_known_repair_is_committed_and_unknown_failure_is_not():
+    from factory.generator.sandbox import SandboxResult
+
+    project_id = "repair-loop-01"
+    workspace = WorkspaceManager(project_id)
+    git = GitHubAutomationService(workspace)
+    git.init_repository()
+    workspace.write_file("backend/app/main.py", "def health_check():\n    return HEALTH_STATUS\n")
+    git.commit_changes("chore: add broken health check")
+    engine = CodeGenerationEngine(project_id)
+
+    class ScriptedSandbox:
+        def __init__(self):
+            self.calls = 0
+
+        def run_backend_tests(self, _workspace):
+            self.calls += 1
+            if self.calls == 1:
+                return SandboxResult(1, "NameError: name 'HEALTH_STATUS' is not defined", "", "failed")
+            return SandboxResult(0, "1 passed", "", "passed")
+
+    engine.testing_engine.sandbox = ScriptedSandbox()
+    outcome = await engine.testing_engine.run_testing_and_fixing_loop(max_retries=1)
+    assert outcome.status == "fixed"
+    assert 'HEALTH_STATUS = "healthy"' in workspace.read_file("backend/app/main.py")
+
+    class UnknownFailure:
+        def run_backend_tests(self, _workspace):
+            return SandboxResult(1, "E   AssertionError: expected 2", "", "failed")
+
+    engine.testing_engine.sandbox = UnknownFailure()
+    failed = await engine.testing_engine.run_testing_and_fixing_loop(max_retries=1)
+    assert failed.status == "failed"
+    rc, log, _ = workspace.run_command(["git", "log", "--oneline"])
+    assert rc == 0
+    assert "automated defect" not in log.lower()
+    assert "expected 2" not in log
+
+
+def test_host_command_does_not_receive_unrelated_secrets(monkeypatch):
+    monkeypatch.setenv("FACTORY_SENTINEL_SECRET", "sentinel-value")
+    workspace = WorkspaceManager("env-isolation-01")
+    rc, out, err = workspace.run_command(
+        ["python3", "-c", "import os; print(os.environ.get('FACTORY_SENTINEL_SECRET', ''))"]
+    )
+    assert rc == 0
+    assert "sentinel-value" not in out
+    assert "sentinel-value" not in err
+
+
+def test_irreversible_commands_are_rejected_before_execution():
+    from factory.generator.sandbox import DockerExecutionSandbox
+
+    result = DockerExecutionSandbox().run_rejected_command(["terraform", "apply", "-auto-approve"])
+    assert result.status == "rejected"
+    assert result.returncode == 126
+
+
+def test_github_publish_does_not_echo_the_token(monkeypatch):
+    from factory.core.config import settings
+
+    monkeypatch.setattr(settings, "GITHUB_TOKEN", "unit-test-token")
+    workspace = WorkspaceManager("publish-guard-01")
+    git = GitHubAutomationService(workspace)
+    git.init_repository()
+    seen = {}
+
+    def poster(url, headers, json):
+        seen["url"] = url
+        seen["authorization"] = headers["Authorization"]
+        return {"html_url": "https://github.com/example/factory-test"}
+
+    result = git.publish_repository("factory-test", poster=poster, push=False)
+    rendered = json.dumps(result)
+    assert result["remote_created"] is True
+    assert result["pushed"] is False
+    assert seen["url"] == "https://api.github.com/user/repos"
+    assert seen["authorization"] == "Bearer unit-test-token"
+    assert "unit-test-token" not in rendered
+    assert "unit-test-token" not in seen["url"]
+

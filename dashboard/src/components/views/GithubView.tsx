@@ -50,18 +50,32 @@ export function GithubView({ projectId }: { projectId: string | null }) {
         <h4 className="text-xs font-bold text-white uppercase tracking-wider">Repository Details</h4>
         <div className="p-4 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-between">
           <div className="font-mono text-xs text-slate-300">
-            {github?.repo_url || "https://github.com/naresh-palle/AI-SOFTWARE-FACTORY.git"}
+            {github?.connected && github.repo_url ? github.repo_url : "Local git only"}
           </div>
-          <a
-            href={github?.repo_url || "https://github.com/naresh-palle/AI-SOFTWARE-FACTORY.git"}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center gap-1 text-xs text-indigo-400 hover:text-indigo-300 font-medium"
-          >
-            <span>View on GitHub</span>
-            <ExternalLink className="w-3.5 h-3.5" />
-          </a>
+          {github?.connected && github.repo_url ? (
+            <a
+              href={github.repo_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1 text-xs text-indigo-400 hover:text-indigo-300 font-medium"
+            >
+              <span>View on GitHub</span>
+              <ExternalLink className="w-3.5 h-3.5" />
+            </a>
+          ) : (
+            <span className="text-xs text-slate-500">No remote repository</span>
+          )}
         </div>
+        {github?.pull_requests && github.pull_requests.length > 0 && (
+          <div className="space-y-2">
+            <h4 className="text-xs font-bold text-white uppercase tracking-wider">Pull requests</h4>
+            {github.pull_requests.map((pull) => (
+              <div key={pull.pr_id} className="p-3 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-300 font-mono">
+                {pull.source_branch} → {pull.target_branch} ({pull.status})
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

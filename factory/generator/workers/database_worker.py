@@ -4,6 +4,8 @@ Generates SQLAlchemy / Alembic migrations, MongoDB Motor schemas, Redis cache la
 and database backup configurations.
 """
 
+import json
+import re
 from typing import Any, Dict, List, Optional
 from factory.core.logger import logger
 from factory.generator.workers.base_worker import BaseWorker, WorkerResult
@@ -34,7 +36,11 @@ class DatabaseWorker(BaseWorker):
         db_type = tech_stack.get("database", "PostgreSQL")
         is_mongo = "mongo" in db_type.lower() or "mongo" in p_lower
         is_ecommerce = any(k in p_lower for k in ["ecommerce", "e-commerce", "shop", "cart", "product", "stripe", "payment"])
-        is_social = any(k in p_lower for k in ["social", "analytics", "youtube", "facebook", "instagram", "meta", "post", "follower"])
+        is_social = any(
+            re.search(rf"\b{re.escape(term)}\b", p_lower)
+            for term in ("social", "analytics", "youtube", "facebook", "instagram", "meta", "post", "follower")
+        )
+        is_employee = any(re.search(rf"\b{term}\b", p_lower) for term in ("employee", "employees", "staff", "payroll"))
 
         files_created: List[str] = []
 
@@ -78,6 +84,19 @@ class DatabaseWorker(BaseWorker):
                     "    status = Column(String(50), default='pending', index=True)\n"
                     "    created_at = Column(DateTime, default=datetime.utcnow)\n"
                 )
+            elif is_employee:
+                models_py += (
+                    "\n    role = Column(String(50), nullable=False, default='employee', index=True)\n\n"
+                    "class EmployeeModel(Base):\n"
+                    "    __tablename__ = 'employees'\n"
+                    "    id = Column(String(36), primary_key=True, index=True)\n"
+                    "    full_name = Column(String(255), nullable=False)\n"
+                    "    email = Column(String(255), unique=True, nullable=False, index=True)\n"
+                    "    title = Column(String(255), nullable=False)\n"
+                    "    department = Column(String(100), nullable=False, index=True)\n"
+                    "    user_id = Column(String(36), ForeignKey('users.id'), nullable=True, index=True)\n"
+                    "    created_at = Column(DateTime, default=datetime.utcnow)\n"
+                )
             elif is_social:
                 models_py += (
                     "\nclass SocialChannelModel(Base):\n"
@@ -98,11 +117,16 @@ class DatabaseWorker(BaseWorker):
                 "import os\n"
                 "from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession\n"
                 "from sqlalchemy.orm import sessionmaker\n\n"
-                "DATABASE_URL = os.getenv('DATABASE_URL', 'postgresql+asyncpg://postgres:postgres@localhost:5432/app_db')\n\n"
-                "engine = create_async_engine(DATABASE_URL, echo=False, pool_pre_ping=True)\n"
-                "AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)\n\n"
+                "DATABASE_URL = os.getenv('DATABASE_URL', '')\n\n"
+                "def create_engine():\n"
+                "    if not DATABASE_URL:\n"
+                "        raise RuntimeError('DATABASE_URL is not configured')\n"
+                "    return create_async_engine(DATABASE_URL, echo=False, pool_pre_ping=True)\n\n"
+                "def session_factory():\n"
+                "    return sessionmaker(create_engine(), class_=AsyncSession, expire_on_commit=False)\n\n"
                 "async def get_db():\n"
-                "    async with AsyncSessionLocal() as session:\n"
+                "    Session = session_factory()\n"
+                "    async with Session() as session:\n"
                 "        yield session\n"
             )
             self.workspace.write_file("backend/app/db/session.py", db_session_py)
@@ -112,7 +136,7 @@ class DatabaseWorker(BaseWorker):
             alembic_ini = (
                 "[alembic]\n"
                 "script_location = migrations\n"
-                "sqlalchemy.url = postgresql://postgres:postgres@localhost:5432/app_db\n\n"
+                "sqlalchemy.url = postgresql://localhost/app_db\n\n"
                 "[loggers]\nkeys = root,sqlalchemy,alembic\n"
                 "[handlers]\nkeys = console\n"
                 "[formatters]\nkeys = generic\n"
@@ -125,8 +149,105 @@ class DatabaseWorker(BaseWorker):
             self.workspace.write_file("backend/alembic.ini", alembic_ini)
             files_created.append("backend/alembic.ini")
 
+            env_py = (
+                "import os\n"
+                "from alembic import context\n"
+                "from sqlalchemy import engine_from_config, pool\n\n"
+                "config = context.config\n"
+                "url = os.getenv('DATABASE_URL', '')\n"
+                "if not url:\n"
+                "    raise RuntimeError('DATABASE_URL is not configured')\n"
+                "if url.startswith('postgresql+asyncpg'):\n"
+                "    url = 'postgresql+psycopg2' + url[len('postgresql+asyncpg'):]\n"
+                "config.set_main_option('sqlalchemy.url', url)\n\n"
+                "def run_migrations_online() -> None:\n"
+                "    connectable = engine_from_config(\n"
+                "        config.get_section(config.config_ini_section) or {},\n"
+                "        prefix='sqlalchemy.',\n"
+                "        poolclass=pool.NullPool,\n"
+                "    )\n"
+                "    with connectable.connect() as connection:\n"
+                "        context.configure(connection=connection, target_metadata=None)\n"
+                "        with context.begin_transaction():\n"
+                "            context.run_migrations()\n\n"
+                "run_migrations_online()\n"
+            )
+            self.workspace.write_file("backend/migrations/env.py", env_py)
+            files_created.append("backend/migrations/env.py")
+
+            if is_employee:
+                upgrade_body = (
+                    "    op.create_table(\n"
+                    "        'users',\n"
+                    "        sa.Column('id', sa.String(length=36), primary_key=True),\n"
+                    "        sa.Column('email', sa.String(length=255), nullable=False),\n"
+                    "        sa.Column('hashed_password', sa.String(length=255), nullable=False),\n"
+                    "        sa.Column('full_name', sa.String(length=255), nullable=False),\n"
+                    "        sa.Column('role', sa.String(length=50), nullable=False),\n"
+                    "        sa.Column('created_at', sa.DateTime(), nullable=True),\n"
+                    "    )\n"
+                    "    op.create_index('ix_users_email', 'users', ['email'], unique=True)\n"
+                    "    op.create_table(\n"
+                    "        'employees',\n"
+                    "        sa.Column('id', sa.String(length=36), primary_key=True),\n"
+                    "        sa.Column('full_name', sa.String(length=255), nullable=False),\n"
+                    "        sa.Column('email', sa.String(length=255), nullable=False),\n"
+                    "        sa.Column('title', sa.String(length=255), nullable=False),\n"
+                    "        sa.Column('department', sa.String(length=100), nullable=False),\n"
+                    "        sa.Column('user_id', sa.String(length=36), sa.ForeignKey('users.id'), nullable=True),\n"
+                    "        sa.Column('created_at', sa.DateTime(), nullable=True),\n"
+                    "    )\n"
+                    "    op.create_index('ix_employees_email', 'employees', ['email'], unique=True)\n"
+                )
+            elif is_ecommerce:
+                upgrade_body = (
+                    "    op.create_table(\n"
+                    "        'users',\n"
+                    "        sa.Column('id', sa.String(length=36), primary_key=True),\n"
+                    "        sa.Column('email', sa.String(length=255), nullable=False),\n"
+                    "        sa.Column('hashed_password', sa.String(length=255), nullable=False),\n"
+                    "        sa.Column('full_name', sa.String(length=255), nullable=False),\n"
+                    "        sa.Column('created_at', sa.DateTime(), nullable=True),\n"
+                    "    )\n"
+                    "    op.create_table(\n"
+                    "        'products',\n"
+                    "        sa.Column('id', sa.String(length=36), primary_key=True),\n"
+                    "        sa.Column('title', sa.String(length=255), nullable=False),\n"
+                    "        sa.Column('price', sa.Float(), nullable=False),\n"
+                    "        sa.Column('inventory', sa.Integer(), nullable=False),\n"
+                    "        sa.Column('category', sa.String(length=100), nullable=True),\n"
+                    "    )\n"
+                    "    op.create_table(\n"
+                    "        'orders',\n"
+                    "        sa.Column('id', sa.String(length=36), primary_key=True),\n"
+                    "        sa.Column('user_id', sa.String(length=36), sa.ForeignKey('users.id')),\n"
+                    "        sa.Column('product_id', sa.String(length=36), sa.ForeignKey('products.id')),\n"
+                    "        sa.Column('quantity', sa.Integer(), nullable=False),\n"
+                    "        sa.Column('total_amount', sa.Float(), nullable=False),\n"
+                    "        sa.Column('status', sa.String(length=50), nullable=False),\n"
+                    "    )\n"
+                )
+            else:
+                upgrade_body = (
+                    "    op.create_table(\n"
+                    "        'users',\n"
+                    "        sa.Column('id', sa.String(length=36), primary_key=True),\n"
+                    "        sa.Column('email', sa.String(length=255), nullable=False),\n"
+                    "        sa.Column('hashed_password', sa.String(length=255), nullable=False),\n"
+                    "        sa.Column('full_name', sa.String(length=255), nullable=False),\n"
+                    "        sa.Column('created_at', sa.DateTime(), nullable=True),\n"
+                    "    )\n"
+                    "    op.create_table(\n"
+                    "        'inquiries',\n"
+                    "        sa.Column('id', sa.String(length=36), primary_key=True),\n"
+                    "        sa.Column('name', sa.String(length=255), nullable=False),\n"
+                    "        sa.Column('email', sa.String(length=255), nullable=False),\n"
+                    "        sa.Column('message', sa.Text(), nullable=False),\n"
+                    "        sa.Column('status', sa.String(length=50), nullable=False),\n"
+                    "    )\n"
+                )
             alembic_migration = (
-                '"""initial schema\n\nRevision ID: 001_initial\nRevises: \nCreate Date: 2026-01-01\n"""\n'
+                '"""initial schema\n\nRevision ID: 001_initial\nRevises:\nCreate Date: 2026-01-01\n"""\n'
                 "from alembic import op\n"
                 "import sqlalchemy as sa\n\n"
                 "revision = '001_initial'\n"
@@ -134,8 +255,8 @@ class DatabaseWorker(BaseWorker):
                 "branch_labels = None\n"
                 "depends_on = None\n\n"
                 "def upgrade() -> None:\n"
-                "    pass  # Autogenerated migration plan\n\n"
-                "def downgrade() -> None:\n"
+                + upgrade_body
+                + "\ndef downgrade() -> None:\n"
                 "    pass\n"
             )
             self.workspace.write_file("backend/migrations/versions/001_initial_schema.py", alembic_migration)
@@ -185,11 +306,11 @@ class DatabaseWorker(BaseWorker):
             "mkdir -p \"$BACKUP_DIR\"\n\n"
             "echo \"[BACKUP] Starting automated database backup into $BACKUP_DIR...\"\n"
             "if [ \"${DB_TYPE:-postgres}\" = \"postgres\" ]; then\n"
-            "  pg_dump -h \"${DB_HOST:-localhost}\" -U \"${DB_USER:-postgres}\" \"${DB_NAME:-app_db}\" | gzip > \"$BACKUP_DIR/postgres_dump.sql.gz\" || echo \"pg_dump skipped in dev mock\"\n"
+            "  pg_dump -h \"${DB_HOST:-localhost}\" -U \"${DB_USER:-postgres}\" \"${DB_NAME:-app_db}\" | gzip > \"$BACKUP_DIR/postgres_dump.sql.gz\"\n"
             "else\n"
-            "  mongodump --uri=\"${MONGO_URI:-mongodb://localhost:27017}\" --out=\"$BACKUP_DIR/mongo_dump\" || echo \"mongodump skipped in dev mock\"\n"
+            "  mongodump --uri=\"${MONGO_URI:-mongodb://localhost:27017}\" --out=\"$BACKUP_DIR/mongo_dump\"\n"
             "fi\n\n"
-            "echo \"[BACKUP] Backup completed successfully.\"\n"
+            "echo \"[BACKUP] Backup file written to $BACKUP_DIR.\"\n"
         )
         self.workspace.write_file("scripts/backup_database.sh", backup_sh)
         files_created.append("scripts/backup_database.sh")

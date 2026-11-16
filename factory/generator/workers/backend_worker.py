@@ -5,6 +5,7 @@ business logic, Pydantic v2 schemas, REST endpoints, and pytest suites.
 """
 
 from typing import Any, Dict, List, Optional
+import re
 from factory.core.logger import logger
 from factory.generator.workers.base_worker import BaseWorker, WorkerResult
 
@@ -32,14 +33,18 @@ class BackendWorker(BaseWorker):
 
         p_lower = requirement_text.lower()
         is_ecommerce = any(k in p_lower for k in ["ecommerce", "e-commerce", "shop", "cart", "product", "stripe", "payment"])
-        is_social = any(k in p_lower for k in ["social", "analytics", "youtube", "facebook", "instagram", "meta", "post", "follower"])
+        is_social = any(
+            re.search(rf"\b{re.escape(term)}\b", p_lower)
+            for term in ("social", "analytics", "youtube", "facebook", "instagram", "meta", "post", "follower")
+        )
+        is_employee = any(re.search(rf"\b{term}\b", p_lower) for term in ("employee", "employees", "staff", "payroll"))
 
         files_created: List[str] = []
 
         # 1. requirements.txt
         reqs = (
             "fastapi>=0.110.0\n"
-            "uvicorn[standard]>=0.29.0\n"
+            "uvicorn>=0.29.0\n"
             "pydantic>=2.6.0\n"
             "pydantic-settings>=2.2.0\n"
             "pytest>=8.0.0\n"
@@ -91,10 +96,12 @@ class BackendWorker(BaseWorker):
             "    return h.hex()\n\n"
             "def verify_password(plain_password: str, hashed_password: str) -> bool:\n"
             "    return hmac.compare_digest(get_password_hash(plain_password), hashed_password)\n\n"
-            "def create_access_token(subject: str, expires_delta_seconds: Optional[int] = None) -> str:\n"
+            "def create_access_token(subject: str, expires_delta_seconds: Optional[int] = None, role: Optional[str] = None) -> str:\n"
             "    header = {'alg': 'HS256', 'typ': 'JWT'}\n"
             "    exp = int(time.time()) + (expires_delta_seconds or settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60)\n"
             "    payload = {'sub': str(subject), 'exp': exp}\n"
+            "    if role:\n"
+            "        payload['role'] = role\n"
             "    h_b64 = _b64encode(json.dumps(header).encode('utf-8'))\n"
             "    p_b64 = _b64encode(json.dumps(payload).encode('utf-8'))\n"
             "    msg = f'{h_b64}.{p_b64}'.encode('utf-8')\n"
@@ -151,6 +158,41 @@ class BackendWorker(BaseWorker):
                 "    total_amount: float\n"
                 "    status: str\n"
             )
+        elif is_employee:
+            schemas_py = (
+                "from pydantic import BaseModel, Field\n"
+                "from typing import Optional\n\n"
+                "class UserCreate(BaseModel):\n"
+                "    email: str\n"
+                "    password: str\n"
+                "    full_name: str\n"
+                "    role: str = 'employee'\n\n"
+                "class UserResponse(BaseModel):\n"
+                "    id: str\n"
+                "    email: str\n"
+                "    full_name: str\n"
+                "    role: str\n\n"
+                "class Token(BaseModel):\n"
+                "    access_token: str\n"
+                "    token_type: str = 'bearer'\n"
+                "    role: str\n\n"
+                "class EmployeeCreate(BaseModel):\n"
+                "    full_name: str\n"
+                "    email: str\n"
+                "    title: str\n"
+                "    department: str\n\n"
+                "class EmployeeUpdate(BaseModel):\n"
+                "    full_name: Optional[str] = None\n"
+                "    email: Optional[str] = None\n"
+                "    title: Optional[str] = None\n"
+                "    department: Optional[str] = None\n\n"
+                "class EmployeeRecord(BaseModel):\n"
+                "    id: str\n"
+                "    full_name: str\n"
+                "    email: str\n"
+                "    title: str\n"
+                "    department: str\n"
+            )
         elif is_social:
             schemas_py = (
                 "from pydantic import BaseModel\n"
@@ -176,6 +218,8 @@ class BackendWorker(BaseWorker):
                 "    total_audience: int\n"
                 "    average_engagement: float\n"
                 "    channels: List[SocialMetricRecord]\n"
+                "    live_api_connected: bool\n"
+                "    source: str\n"
             )
         else:
             schemas_py = (
@@ -205,43 +249,88 @@ class BackendWorker(BaseWorker):
         files_created.append("backend/app/schemas/domain.py")
 
         # 6. app/api/auth.py
-        auth_py = (
-            "from fastapi import APIRouter, HTTPException, status, Depends\n"
-            "from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm\n"
-            "from app.schemas.domain import UserCreate, UserResponse, Token\n"
-            "from app.core.security import get_password_hash, verify_password, create_access_token, decode_access_token\n\n"
-            "router = APIRouter(prefix='/auth', tags=['Authentication'])\n"
-            "oauth2_scheme = OAuth2PasswordBearer(tokenUrl='/api/v1/auth/login')\n\n"
-            "DB_USERS = {}\n\n"
-            "@router.post('/register', response_model=UserResponse, status_code=status.HTTP_201_CREATED)\n"
-            "def register(user_in: UserCreate):\n"
-            "    if user_in.email in DB_USERS:\n"
-            "        raise HTTPException(status_code=400, detail='Email already registered')\n"
-            "    user_id = f'usr_{len(DB_USERS) + 1}'\n"
-            "    hashed = get_password_hash(user_in.password)\n"
-            "    DB_USERS[user_in.email] = {\n"
-            "        'id': user_id, 'email': user_in.email, 'hashed_password': hashed, 'full_name': user_in.full_name\n"
-            "    }\n"
-            "    return {'id': user_id, 'email': user_in.email, 'full_name': user_in.full_name}\n\n"
-            "@router.post('/login', response_model=Token)\n"
-            "def login(form_data: OAuth2PasswordRequestForm = Depends()):\n"
-            "    user = DB_USERS.get(form_data.username)\n"
-            "    if not user or not verify_password(form_data.password, user['hashed_password']):\n"
-            "        raise HTTPException(status_code=401, detail='Incorrect email or password')\n"
-            "    token = create_access_token(subject=user['email'])\n"
-            "    return {'access_token': token, 'token_type': 'bearer'}\n\n"
-            "@router.get('/me', response_model=UserResponse)\n"
-            "def get_me(token: str = Depends(oauth2_scheme)):\n"
-            "    try:\n"
-            "        payload = decode_access_token(token)\n"
-            "        email = payload.get('sub')\n"
-            "        if not email or email not in DB_USERS:\n"
-            "            raise HTTPException(status_code=401, detail='User not found')\n"
-            "        u = DB_USERS[email]\n"
-            "        return {'id': u['id'], 'email': u['email'], 'full_name': u['full_name']}\n"
-            "    except Exception:\n"
-            "        raise HTTPException(status_code=401, detail='Invalid token')\n"
-        )
+        if is_employee:
+            auth_py = (
+                "from fastapi import APIRouter, HTTPException, status, Depends\n"
+                "from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm\n"
+                "from app.schemas.domain import UserCreate, UserResponse, Token\n"
+                "from app.core.security import get_password_hash, verify_password, create_access_token, decode_access_token\n\n"
+                "router = APIRouter(prefix='/auth', tags=['Authentication'])\n"
+                "oauth2_scheme = OAuth2PasswordBearer(tokenUrl='/api/v1/auth/login')\n"
+                "ALLOWED_ROLES = {'admin', 'manager', 'employee'}\n"
+                "DB_USERS = {}\n\n"
+                "@router.post('/register', response_model=UserResponse, status_code=status.HTTP_201_CREATED)\n"
+                "def register(user_in: UserCreate):\n"
+                "    if user_in.email in DB_USERS:\n"
+                "        raise HTTPException(status_code=400, detail='Email already registered')\n"
+                "    if user_in.role not in ALLOWED_ROLES:\n"
+                "        raise HTTPException(status_code=400, detail='Unknown role')\n"
+                "    if user_in.role == 'admin' and DB_USERS:\n"
+                "        raise HTTPException(status_code=403, detail='Only the first account can be an administrator')\n"
+                "    user_id = f'usr_{len(DB_USERS) + 1}'\n"
+                "    hashed = get_password_hash(user_in.password)\n"
+                "    DB_USERS[user_in.email] = {\n"
+                "        'id': user_id, 'email': user_in.email, 'hashed_password': hashed,\n"
+                "        'full_name': user_in.full_name, 'role': user_in.role,\n"
+                "    }\n"
+                "    return {'id': user_id, 'email': user_in.email, 'full_name': user_in.full_name, 'role': user_in.role}\n\n"
+                "@router.post('/login', response_model=Token)\n"
+                "def login(form_data: OAuth2PasswordRequestForm = Depends()):\n"
+                "    user = DB_USERS.get(form_data.username)\n"
+                "    if not user or not verify_password(form_data.password, user['hashed_password']):\n"
+                "        raise HTTPException(status_code=401, detail='Incorrect email or password')\n"
+                "    token = create_access_token(subject=user['email'], role=user['role'])\n"
+                "    return {'access_token': token, 'token_type': 'bearer', 'role': user['role']}\n\n"
+                "@router.get('/me', response_model=UserResponse)\n"
+                "def get_me(token: str = Depends(oauth2_scheme)):\n"
+                "    try:\n"
+                "        payload = decode_access_token(token)\n"
+                "        email = payload.get('sub')\n"
+                "        if not email or email not in DB_USERS:\n"
+                "            raise HTTPException(status_code=401, detail='User not found')\n"
+                "        u = DB_USERS[email]\n"
+                "        return {'id': u['id'], 'email': u['email'], 'full_name': u['full_name'], 'role': u['role']}\n"
+                "    except Exception:\n"
+                "        raise HTTPException(status_code=401, detail='Invalid token')\n"
+            )
+        else:
+            auth_py = (
+                "from fastapi import APIRouter, HTTPException, status, Depends\n"
+                "from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm\n"
+                "from app.schemas.domain import UserCreate, UserResponse, Token\n"
+                "from app.core.security import get_password_hash, verify_password, create_access_token, decode_access_token\n\n"
+                "router = APIRouter(prefix='/auth', tags=['Authentication'])\n"
+                "oauth2_scheme = OAuth2PasswordBearer(tokenUrl='/api/v1/auth/login')\n\n"
+                "DB_USERS = {}\n\n"
+                "@router.post('/register', response_model=UserResponse, status_code=status.HTTP_201_CREATED)\n"
+                "def register(user_in: UserCreate):\n"
+                "    if user_in.email in DB_USERS:\n"
+                "        raise HTTPException(status_code=400, detail='Email already registered')\n"
+                "    user_id = f'usr_{len(DB_USERS) + 1}'\n"
+                "    hashed = get_password_hash(user_in.password)\n"
+                "    DB_USERS[user_in.email] = {\n"
+                "        'id': user_id, 'email': user_in.email, 'hashed_password': hashed, 'full_name': user_in.full_name\n"
+                "    }\n"
+                "    return {'id': user_id, 'email': user_in.email, 'full_name': user_in.full_name}\n\n"
+                "@router.post('/login', response_model=Token)\n"
+                "def login(form_data: OAuth2PasswordRequestForm = Depends()):\n"
+                "    user = DB_USERS.get(form_data.username)\n"
+                "    if not user or not verify_password(form_data.password, user['hashed_password']):\n"
+                "        raise HTTPException(status_code=401, detail='Incorrect email or password')\n"
+                "    token = create_access_token(subject=user['email'])\n"
+                "    return {'access_token': token, 'token_type': 'bearer'}\n\n"
+                "@router.get('/me', response_model=UserResponse)\n"
+                "def get_me(token: str = Depends(oauth2_scheme)):\n"
+                "    try:\n"
+                "        payload = decode_access_token(token)\n"
+                "        email = payload.get('sub')\n"
+                "        if not email or email not in DB_USERS:\n"
+                "            raise HTTPException(status_code=401, detail='User not found')\n"
+                "        u = DB_USERS[email]\n"
+                "        return {'id': u['id'], 'email': u['email'], 'full_name': u['full_name']}\n"
+                "    except Exception:\n"
+                "        raise HTTPException(status_code=401, detail='Invalid token')\n"
+            )
         self.workspace.write_file("backend/app/api/auth.py", auth_py)
         files_created.append("backend/app/api/auth.py")
 
@@ -276,9 +365,60 @@ class BackendWorker(BaseWorker):
                 "        status='confirmed'\n"
                 "    )\n"
             )
+        elif is_employee:
+            endpoints_py = (
+                "from fastapi import APIRouter, Depends, HTTPException\n"
+                "from typing import Dict, List\n"
+                "from fastapi.security import OAuth2PasswordBearer\n"
+                "from app.api.auth import DB_USERS\n"
+                "from app.core.security import decode_access_token\n"
+                "from app.schemas.domain import EmployeeCreate, EmployeeRecord, EmployeeUpdate\n\n"
+                "router = APIRouter(prefix='/employees', tags=['Employees'])\n"
+                "oauth2_scheme = OAuth2PasswordBearer(tokenUrl='/api/v1/auth/login')\n"
+                "EMPLOYEES: Dict[str, dict] = {}\n\n"
+                "def actor(token: str = Depends(oauth2_scheme)) -> dict:\n"
+                "    try:\n"
+                "        payload = decode_access_token(token)\n"
+                "    except Exception:\n"
+                "        raise HTTPException(status_code=401, detail='Invalid token')\n"
+                "    user = DB_USERS.get(payload.get('sub'))\n"
+                "    if not user:\n"
+                "        raise HTTPException(status_code=401, detail='User not found')\n"
+                "    return user\n\n"
+                "@router.get('', response_model=List[EmployeeRecord])\n"
+                "def list_employees(user: dict = Depends(actor)):\n"
+                "    return list(EMPLOYEES.values())\n\n"
+                "@router.post('', response_model=EmployeeRecord, status_code=201)\n"
+                "def create_employee(body: EmployeeCreate, user: dict = Depends(actor)):\n"
+                "    if user['role'] not in {'admin', 'manager'}:\n"
+                "        raise HTTPException(status_code=403, detail='Manager or administrator role is required')\n"
+                "    record = {'id': f'emp_{len(EMPLOYEES) + 1}', **body.model_dump()}\n"
+                "    EMPLOYEES[record['id']] = record\n"
+                "    return record\n\n"
+                "@router.put('/{employee_id}', response_model=EmployeeRecord)\n"
+                "def update_employee(employee_id: str, body: EmployeeUpdate, user: dict = Depends(actor)):\n"
+                "    if user['role'] not in {'admin', 'manager'}:\n"
+                "        raise HTTPException(status_code=403, detail='Manager or administrator role is required')\n"
+                "    current = EMPLOYEES.get(employee_id)\n"
+                "    if not current:\n"
+                "        raise HTTPException(status_code=404, detail='Employee not found')\n"
+                "    for key, value in body.model_dump(exclude_unset=True).items():\n"
+                "        if value is not None:\n"
+                "            current[key] = value\n"
+                "    return current\n\n"
+                "@router.delete('/{employee_id}')\n"
+                "def delete_employee(employee_id: str, user: dict = Depends(actor)):\n"
+                "    if user['role'] != 'admin':\n"
+                "        raise HTTPException(status_code=403, detail='Administrator role is required')\n"
+                "    if employee_id not in EMPLOYEES:\n"
+                "        raise HTTPException(status_code=404, detail='Employee not found')\n"
+                "    EMPLOYEES.pop(employee_id)\n"
+                "    return {'deleted': employee_id}\n"
+            )
         elif is_social:
             endpoints_py = (
-                "from fastapi import APIRouter\n"
+                "from fastapi import APIRouter, HTTPException\n"
+                "import os\n"
                 "from typing import List\n"
                 "from app.schemas.domain import SocialMetricRecord, AnalyticsSummary\n\n"
                 "router = APIRouter(prefix='/analytics', tags=['Social Analytics'])\n\n"
@@ -291,7 +431,25 @@ class BackendWorker(BaseWorker):
                 "    ]\n"
                 "    total = sum(c.followers for c in channels)\n"
                 "    avg_eng = round(sum(c.engagement_rate for c in channels) / len(channels), 2)\n"
-                "    return AnalyticsSummary(total_audience=total, average_engagement=avg_eng, channels=channels)\n"
+                "    return AnalyticsSummary(total_audience=total, average_engagement=avg_eng, channels=channels, live_api_connected=False, source='local_sample')\n\n"
+                "@router.get('/connection-status')\n"
+                "def connection_status():\n"
+                "    required = ['META_ACCESS_TOKEN', 'YOUTUBE_API_KEY']\n"
+                "    missing = [name for name in required if not os.getenv(name)]\n"
+                "    return {\n"
+                "        'connected': False,\n"
+                "        'live_api_connected': False,\n"
+                "        'approval_required': True,\n"
+                "        'missing_credentials': missing,\n"
+                "        'permissions': {\n"
+                "            'facebook': ['pages_show_list', 'pages_read_engagement', 'read_insights'],\n"
+                "            'instagram': ['instagram_basic', 'instagram_manage_insights'],\n"
+                "            'youtube': ['https://www.googleapis.com/auth/youtube.readonly'],\n"
+                "        },\n"
+                "    }\n\n"
+                "@router.get('/oauth/callback')\n"
+                "def oauth_callback():\n"
+                "    raise HTTPException(status_code=403, detail='OAuth callback was not completed. Human approval and provider credentials are required.')\n"
             )
         else:
             endpoints_py = (
@@ -324,7 +482,7 @@ class BackendWorker(BaseWorker):
             "app.add_middleware(\n"
             "    CORSMiddleware,\n"
             "    allow_origins=settings.ALLOWED_ORIGINS,\n"
-            "    allow_credentials=True,\n"
+            "    allow_credentials=False,\n"
             "    allow_methods=['*'],\n"
             "    allow_headers=['*'],\n"
             ")\n\n"
@@ -364,7 +522,36 @@ class BackendWorker(BaseWorker):
             "    token_data = login_res.json()\n"
             "    assert 'access_token' in token_data\n"
         )
-        if is_ecommerce:
+        if is_employee:
+            test_py = test_py.replace(
+                "json={'email': 'test@example.com', 'password': 'SecurePassword123!', 'full_name': 'Test User'}",
+                "json={'email': 'test@example.com', 'password': 'SecurePassword123!', 'full_name': 'Test User', 'role': 'admin'}",
+            )
+            test_py += (
+                "\n    assert data['role'] == 'admin'\n\n"
+                "def test_employee_crud_and_role_guard():\n"
+                "    login_res = client.post('/api/v1/auth/login', data={'username': 'test@example.com', 'password': 'SecurePassword123!'})\n"
+                "    admin_token = login_res.json()['access_token']\n"
+                "    headers = {'Authorization': f'Bearer {admin_token}'}\n"
+                "    created = client.post('/api/v1/employees', headers=headers, json={'full_name': 'Ada Lovelace', 'email': 'ada@example.com', 'title': 'Engineer', 'department': 'Research'})\n"
+                "    assert created.status_code == 201\n"
+                "    employee_id = created.json()['id']\n"
+                "    listed = client.get('/api/v1/employees', headers=headers)\n"
+                "    assert listed.status_code == 200\n"
+                "    assert any(item['id'] == employee_id for item in listed.json())\n"
+                "    updated = client.put(f'/api/v1/employees/{employee_id}', headers=headers, json={'title': 'Lead Engineer'})\n"
+                "    assert updated.status_code == 200\n"
+                "    assert updated.json()['title'] == 'Lead Engineer'\n"
+                "    staff = client.post('/api/v1/auth/register', json={'email': 'staff@example.com', 'password': 'SecurePassword123!', 'full_name': 'Staff User', 'role': 'employee'})\n"
+                "    assert staff.status_code == 201\n"
+                "    staff_login = client.post('/api/v1/auth/login', data={'username': 'staff@example.com', 'password': 'SecurePassword123!'})\n"
+                "    staff_headers = {'Authorization': f'Bearer {staff_login.json()[\"access_token\"]}'}\n"
+                "    denied = client.delete(f'/api/v1/employees/{employee_id}', headers=staff_headers)\n"
+                "    assert denied.status_code == 403\n"
+                "    removed = client.delete(f'/api/v1/employees/{employee_id}', headers=headers)\n"
+                "    assert removed.status_code == 200\n"
+            )
+        elif is_ecommerce:
             test_py += (
                 "\ndef test_ecommerce_flow():\n"
                 "    products = client.get('/api/v1/store/products')\n"
@@ -386,6 +573,19 @@ class BackendWorker(BaseWorker):
                 "    data = summary.json()\n"
                 "    assert data['total_audience'] > 0\n"
                 "    assert len(data['channels']) == 3\n"
+                "    assert data['live_api_connected'] is False\n"
+                "    assert data['source'] == 'local_sample'\n\n"
+                "def test_oauth_status_is_not_connected():\n"
+                "    status_res = client.get('/api/v1/analytics/connection-status')\n"
+                "    assert status_res.status_code == 200\n"
+                "    body = status_res.json()\n"
+                "    assert body['connected'] is False\n"
+                "    assert body['live_api_connected'] is False\n"
+                "    assert body['approval_required'] is True\n"
+                "    assert 'META_ACCESS_TOKEN' in body['missing_credentials']\n"
+                "    assert 'YOUTUBE_API_KEY' in body['missing_credentials']\n"
+                "    callback = client.get('/api/v1/analytics/oauth/callback')\n"
+                "    assert callback.status_code == 403\n"
             )
 
         self.workspace.write_file("backend/tests/test_api.py", test_py)
