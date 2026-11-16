@@ -3,7 +3,22 @@
  * Connects the Next.js Dashboard to the FastAPI Master Orchestrator backend.
  */
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+export function getApiBaseUrl(): string {
+  let base = (process.env.NEXT_PUBLIC_API_URL || "").trim();
+  if (!base) {
+    if (typeof window !== "undefined") {
+      if (window.location.hostname === "app.palramai.in") {
+        return "https://api.palramai.in";
+      }
+    }
+    return "http://127.0.0.1:8000";
+  }
+  if (base.endsWith("/")) base = base.slice(0, -1);
+  if (base.endsWith("/api/v1")) base = base.slice(0, -7);
+  return base;
+}
+
+const API_BASE = getApiBaseUrl();
 
 const AUTH_STORAGE_KEY = "palram_studio_token";
 
@@ -22,7 +37,7 @@ export function setStudioAccessToken(token: string | null): void {
 }
 
 async function fetchJSON<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-  const url = `${API_BASE}${endpoint}`;
+  const url = `${getApiBaseUrl()}${endpoint}`;
   const token = getStudioAccessToken();
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -32,7 +47,7 @@ async function fetchJSON<T>(endpoint: string, options: RequestInit = {}): Promis
     headers.Authorization = `Bearer ${token}`;
   }
 
-  const response = await fetch(url, { ...options, headers });
+  const response = await fetch(url, { ...options, headers, credentials: "include" });
   if (!response.ok) {
     const errorText = await response.text();
     throw new Error(`API Error ${response.status}: ${errorText || response.statusText}`);

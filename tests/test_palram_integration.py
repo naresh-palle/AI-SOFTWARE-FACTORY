@@ -136,3 +136,43 @@ async def test_open_registration_still_issues_token(monkeypatch):
         body = reg.json()
         assert body["registration_status"] == "active"
         assert body.get("access_token")
+
+
+@pytest.mark.asyncio
+async def test_cookie_auth_and_logout(monkeypatch):
+    """Test secure cookie-based session and logout for Studio frontend."""
+    monkeypatch.setattr(settings, "REGISTRATION_MODE", "open")
+    email = f"cookie_{datetime.now(timezone.utc).timestamp()}@palramai.test"
+    password = "CookieSecurePass123!"
+    transport = ASGITransport(app=app)
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # Register
+        reg = await client.post(
+            "/api/v1/saas/auth/register",
+            json={
+                "name": "Cookie User",
+                "email": email,
+                "password": password,
+                "organization_name": "Cookie Org",
+            },
+        )
+        assert reg.status_code == 200
+
+        # Login sets secure cookie
+        login = await client.post(
+            "/api/v1/saas/auth/login",
+            json={"email": email, "password": password},
+        )
+        assert login.status_code == 200
+        assert "palram_studio_token" in login.cookies
+
+        # Request /auth/me using only the cookie (no Authorization header)
+        me = await client.get("/api/v1/saas/auth/me")
+        assert me.status_code == 200
+        assert me.json()["user"]["email"] == email
+
+        # Logout clears cookie
+        logout = await client.post("/api/v1/saas/auth/logout")
+        assert logout.status_code == 200
+        assert logout.json()["status"] == "logged_out"

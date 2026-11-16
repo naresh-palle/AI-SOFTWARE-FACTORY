@@ -198,9 +198,10 @@ def resolve_studio_auth(
 def extract_saas_auth_context(
     authorization: Optional[str],
     x_tenant_id: Optional[str] = None,
+    cookie_token: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Customer SaaS routes: JWT required; tenant header only when explicitly allowed."""
-    token = _bearer_token(authorization)
+    """Customer SaaS routes: JWT required via Bearer header or secure cookie; tenant header only when explicitly allowed."""
+    token = _bearer_token(authorization) or cookie_token
     if token:
         try:
             return CustomerAuthManager.decode_jwt_token(token)

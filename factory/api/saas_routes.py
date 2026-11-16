@@ -4,10 +4,11 @@ FastAPI Routes for Multi-Tenant SaaS Platform, Customer Management & Billing Eng
 
 from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Header, Query, Request, status
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Header, Query, Request, Response, status
 from pydantic import BaseModel, Field
 
 from factory.api.auth_deps import extract_saas_auth_context, require_platform_admin
+from factory.core.config import EnvironmentType, settings
 from factory.core.database import get_db_session
 from factory.core.logger import logger
 from factory.saas.tenant_manager import TenantManager, TenantIsolationError
@@ -111,8 +112,12 @@ class OverrideQuotaRequest(BaseModel):
 # Auth & Tenant Helper
 # ---------------------------------------------------------
 
-def _extract_auth_context(authorization: Optional[str], x_tenant_id: Optional[str] = None) -> Dict[str, Any]:
-    return extract_saas_auth_context(authorization, x_tenant_id)
+def _extract_auth_context(
+    authorization: Optional[str] = None,
+    x_tenant_id: Optional[str] = None,
+    cookie_token: Optional[str] = None,
+) -> Dict[str, Any]:
+    return extract_saas_auth_context(authorization, x_tenant_id, cookie_token)
 
 
 # ---------------------------------------------------------
@@ -207,34 +212,63 @@ async def register_customer(payload: CustomerRegisterRequest):
 
 
 @router.post("/auth/login")
-async def login_customer(payload: CustomerLoginRequest):
+async def login_customer(payload: CustomerLoginRequest, response: Response):
     """Authenticate customer with email and password."""
     async with get_db_session() as session:
         try:
             res = await auth_mgr.authenticate_customer(session, payload.email, payload.password)
+            token = res["token"]
+
+            # Secure cookie for studio session across *.palramai.in
+            cookie_domain = ".palramai.in" if settings.ENVIRONMENT == EnvironmentType.PRODUCTION else None
+            response.set_cookie(
+                key="palram_studio_token",
+                value=token,
+                httponly=True,
+                secure=settings.ENVIRONMENT == EnvironmentType.PRODUCTION,
+                samesite="lax",
+                domain=cookie_domain,
+                max_age=86400 * 7,
+            )
+
             return {
-                "access_token": res["token"],
-                "token": res["token"],
+                "access_token": token,
+                "token": token,
                 "user": {
                     "id": res["user_id"],
                     "email": res["email"],
-                    "role": res["role"]
+                    "role": res["role"],
                 },
                 "tenant": {
-                    "id": res["tenant_id"]
-                }
+                    "id": res["tenant_id"],
+                },
             }
         except ValueError as e:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e))
 
 
+@router.post("/auth/logout")
+async def logout_customer(response: Response):
+    """Clear customer session cookie."""
+    cookie_domain = ".palramai.in" if settings.ENVIRONMENT == EnvironmentType.PRODUCTION else None
+    response.delete_cookie(
+        key="palram_studio_token",
+        domain=cookie_domain,
+        httponly=True,
+        secure=settings.ENVIRONMENT == EnvironmentType.PRODUCTION,
+        samesite="lax",
+    )
+    return {"status": "logged_out"}
+
+
 @router.get("/auth/me")
 async def get_current_user_profile(
     authorization: Optional[str] = Header(None),
-    x_tenant_id: Optional[str] = Header(None)
+    x_tenant_id: Optional[str] = Header(None),
+    palram_studio_token: Optional[str] = Cookie(None),
 ):
     """Fetch profile and tenant context for current authenticated customer."""
-    ctx = _extract_auth_context(authorization, x_tenant_id)
+    ctx = _extract_auth_context(authorization, x_tenant_id, palram_studio_token)
     async with get_db_session() as session:
         tenant = await tenant_mgr.get_tenant(session, ctx["tenant_id"])
         if not tenant:
