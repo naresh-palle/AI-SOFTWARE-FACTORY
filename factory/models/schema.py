@@ -528,3 +528,103 @@ class DeadLetterJob(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     project = relationship("Project")
+
+
+# ==========================================
+# Deployment & Release Management Entities
+# ==========================================
+
+class BuildArtifact(Base):
+    __tablename__ = "build_artifacts"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=False, index=True)
+    version = Column(String(50), nullable=False)  # e.g. v1.0.0
+    build_id = Column(String(100), nullable=False, index=True)
+    commit_sha = Column(String(100), nullable=False)
+    artifact_type = Column(String(50), nullable=False)  # docker_image, tar_gz_bundle, mobile_bundle, static_web
+    artifact_url = Column(String(500), nullable=False)
+    image_tag = Column(String(255), nullable=True)
+    sbom_json = Column(JSON, default=dict)
+    security_scan_summary = Column(JSON, default=dict)
+    size_bytes = Column(Integer, default=0)
+    sha256 = Column(String(64), nullable=False)
+    status = Column(String(50), default="ready")  # building, ready, failed, scanned
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    project = relationship("Project")
+
+
+class DeploymentRelease(Base):
+    __tablename__ = "deployment_releases"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=False, index=True)
+    version = Column(String(50), nullable=False)
+    environment = Column(String(50), nullable=False)  # development, testing, staging, production
+    strategy = Column(String(50), default="rolling")  # rolling, blue_green, canary
+    status = Column(String(50), default="prepared")  # prepared, pending_approval, deploying, active, rolled_back, failed
+    build_artifact_id = Column(String(36), ForeignKey("build_artifacts.id"), nullable=True)
+    commit_sha = Column(String(100), nullable=False)
+    endpoint_url = Column(String(500), nullable=True)
+    target_type = Column(String(50), default="aws_ecs")  # aws_ecs, aws_s3_cloudfront, kubernetes, mobile_store
+    manifests_json = Column(JSON, default=dict)
+    health_check_summary = Column(JSON, default=dict)
+    deployed_by = Column(String(100), default="autonomous_agent")
+    is_current = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    deployed_at = Column(DateTime, nullable=True)
+
+    project = relationship("Project")
+    build_artifact = relationship("BuildArtifact")
+
+
+class DatabaseMigrationRecord(Base):
+    __tablename__ = "database_migrations"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=False, index=True)
+    version_num = Column(String(50), nullable=False)
+    description = Column(String(255), nullable=False)
+    script_name = Column(String(255), nullable=False)
+    sql_up = Column(Text, nullable=False)
+    sql_down = Column(Text, nullable=True)
+    is_destructive = Column(Boolean, default=False)
+    backup_checkpoint = Column(String(255), nullable=True)
+    status = Column(String(50), default="pending")  # pending, approved, executed, rolled_back, failed
+    executed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    project = relationship("Project")
+
+
+class EnvironmentConfig(Base):
+    __tablename__ = "environment_configs"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=False, index=True)
+    environment = Column(String(50), nullable=False)  # development, testing, staging, production
+    config_data = Column(JSON, default=dict)
+    secret_references = Column(JSON, default=dict)  # Pointers to Secrets Manager, never plaintext
+    cpu_limits = Column(String(50), default="1024m")
+    memory_limits = Column(String(50), default="2048Mi")
+    min_replicas = Column(Integer, default=1)
+    max_replicas = Column(Integer, default=5)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    project = relationship("Project")
+
+
+class RollbackRecord(Base):
+    __tablename__ = "rollback_records"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=False, index=True)
+    from_release_id = Column(String(36), ForeignKey("deployment_releases.id"), nullable=False)
+    to_release_id = Column(String(36), ForeignKey("deployment_releases.id"), nullable=False)
+    reason = Column(String(500), nullable=False)
+    trigger_type = Column(String(50), default="automated_health_failure")  # automated_health_failure, manual_operator
+    status = Column(String(50), default="completed")  # initiated, completed, failed
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    project = relationship("Project")

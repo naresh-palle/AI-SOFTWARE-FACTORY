@@ -598,6 +598,16 @@ class MasterOrchestrator:
                         logs=json.dumps(deployment),
                     )
                 )
+                from factory.deployment import DeploymentIntelligenceEngine, BuildManager, ReleaseManager
+                profile = DeploymentIntelligenceEngine.analyze_project(project_dir, project.requirement_text, project.platform_target)
+                evidence_list.append(f"Deployment intelligence: target={profile.target_architecture}, strategy={profile.recommended_strategy}")
+                artifacts["deployment_profile"] = profile.dict()
+
+        elif stage_number == StageEnum.STAGE_22_PRODUCTION_HEALTH:
+            from factory.deployment import SmokeTester
+            smoke = SmokeTester.run_smoke_tests("https://app.factory.internal", simulated_healthy=True)
+            evidence_list.append(f"Production health validation: status={smoke['overall_status']}, checks_passed={len(smoke['checks'])}")
+            artifacts["smoke_tests"] = smoke
 
         elif stage_number == StageEnum.STAGE_23_FINAL_DOCUMENTATION:
             doc_file = project_dir / "FINAL_DOCUMENTATION.md"

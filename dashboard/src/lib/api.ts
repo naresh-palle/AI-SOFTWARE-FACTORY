@@ -615,3 +615,171 @@ export async function triggerCloudRecovery() {
     method: "POST",
   });
 }
+
+
+// ==========================================
+// Deployment & Release Management APIs
+// ==========================================
+
+export async function fetchDeploymentOverviewStatus() {
+  return fetchJSON<{
+    summary: {
+      total_deployments: number;
+      total_releases: number;
+      total_build_artifacts: number;
+      total_rollbacks: number;
+    };
+    environments: Array<{
+      name: string;
+      status: string;
+      type: string;
+      url: string;
+    }>;
+    cost_estimate: {
+      monthly_total_usd: number;
+      breakdown: Record<string, number>;
+      currency: string;
+      tier: string;
+    };
+    supported_strategies: string[];
+  }>("/api/v1/deployment/status");
+}
+
+export async function fetchDeploymentAnalysis(projectId: string) {
+  return fetchJSON<{
+    app_type: string;
+    frontend_framework?: string;
+    backend_framework?: string;
+    primary_language: string;
+    database_required?: string;
+    cache_required?: string;
+    container_required: boolean;
+    target_architecture: string;
+    recommended_strategy: string;
+    scaling_tier: string;
+    estimated_monthly_cost_usd: number;
+    env_vars_required: string[];
+    secrets_required: string[];
+    rationale: string;
+  }>(`/api/v1/deployment/analysis/${projectId}`);
+}
+
+export async function fetchBuildArtifacts(projectId: string) {
+  return fetchJSON<
+    Array<{
+      id: string;
+      version: string;
+      build_id: string;
+      commit_sha: string;
+      image_tag?: string;
+      sha256: string;
+      size_bytes: number;
+      status: string;
+      security_scan: any;
+      created_at: string;
+    }>
+  >(`/api/v1/deployment/artifacts/${projectId}`);
+}
+
+export async function fetchDeploymentReleases(projectId: string) {
+  return fetchJSON<
+    Array<{
+      id: string;
+      version: string;
+      environment: string;
+      strategy: string;
+      status: string;
+      is_current: boolean;
+      endpoint_url?: string;
+      commit_sha: string;
+      created_at: string;
+      deployed_at?: string;
+    }>
+  >(`/api/v1/deployment/releases/${projectId}`);
+}
+
+export async function fetchDatabaseMigrations(projectId: string) {
+  return fetchJSON<
+    Array<{
+      id: string;
+      version_num: string;
+      description: string;
+      script_name: string;
+      is_destructive: boolean;
+      backup_checkpoint?: string;
+      status: string;
+      created_at: string;
+      executed_at?: string;
+    }>
+  >(`/api/v1/deployment/migrations/${projectId}`);
+}
+
+export async function fetchEnvironmentConfigs(projectId: string) {
+  return fetchJSON<
+    Array<{
+      environment: string;
+      config_data: Record<string, any>;
+      secret_references: Record<string, string>;
+      cpu_limits: string;
+      memory_limits: string;
+      min_replicas: number;
+      max_replicas: number;
+    }>
+  >(`/api/v1/deployment/environments/${projectId}`);
+}
+
+export async function triggerDeploymentBuild(payload: {
+  project_id: string;
+  version: string;
+  commit_sha?: string;
+  artifact_type?: string;
+}) {
+  return fetchJSON<{
+    artifact_id: string;
+    build_id: string;
+    version: string;
+    image_tag: string;
+    status: string;
+    security_gate_passed: boolean;
+  }>("/api/v1/deployment/build", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deployRelease(releaseId: string, simulateHealthy: boolean = true, approved: boolean = false) {
+  return fetchJSON<{
+    success: boolean;
+    status: string;
+    release_id?: string;
+    version?: string;
+    environment?: string;
+    smoke_tests?: any;
+    rollback?: any;
+    reason?: string;
+  }>(`/api/v1/deployment/release/${releaseId}/deploy`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ simulate_healthy: simulateHealthy, approved }),
+  });
+}
+
+export async function triggerRollback(payload: {
+  project_id: string;
+  current_release_id: string;
+  reason: string;
+}) {
+  return fetchJSON<{
+    success: boolean;
+    rollback_id: string;
+    from_version: string;
+    to_version: string;
+    environment: string;
+    reason: string;
+  }>("/api/v1/deployment/rollback", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
