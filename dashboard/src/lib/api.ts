@@ -1431,3 +1431,244 @@ export async function generateImprovementProposals(projectId: string) {
     method: "POST",
   });
 }
+
+// -------------------------------------------------------------
+// Phase 9: Multi-Tenant SaaS, Customer Management & Billing API
+// -------------------------------------------------------------
+
+export async function fetchSaaSProfile() {
+  return fetchJSON<{
+    user: { id: string; email: string; role: string };
+    tenant: { id: string; name: string; slug: string; status: string };
+    subscription: any;
+  }>("/api/v1/saas/auth/me");
+}
+
+export async function fetchSaaSPlans() {
+  return fetchJSON<Array<{
+    id: string;
+    tier: string;
+    name: string;
+    description: string;
+    price_monthly: number;
+    price_yearly: number;
+    currency: string;
+    limits: {
+      max_projects: number;
+      monthly_tokens: number;
+      cloud_worker_minutes: number;
+      concurrent_builds: number;
+    };
+    features: string[];
+  }>>("/api/v1/saas/subscriptions/plans");
+}
+
+export async function fetchActiveSubscription() {
+  return fetchJSON<{
+    id: string;
+    tenant_id: string;
+    plan: {
+      tier: string;
+      name: string;
+      price_monthly: number;
+      limits: any;
+    };
+    status: string;
+    billing_cycle: string;
+    current_period_end: string;
+    cancel_at_period_end: boolean;
+  }>("/api/v1/saas/subscriptions/active");
+}
+
+export async function subscribeToPlan(payload: { plan_tier: string; billing_cycle?: string }) {
+  return fetchJSON<{ status: string; subscription_id: string; plan_tier: string }>(
+    "/api/v1/saas/subscriptions/subscribe",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }
+  );
+}
+
+export async function upgradeSubscription(payload: { new_plan_tier: string; billing_cycle?: string }) {
+  return fetchJSON<{ status: string; subscription_id: string; plan_tier: string }>(
+    "/api/v1/saas/subscriptions/upgrade",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }
+  );
+}
+
+export async function fetchUsageSummary() {
+  return fetchJSON<{
+    tenant_id: string;
+    period: { start: string; end: string };
+    metrics: {
+      ai_tokens: { used: number; limit: number; pct: number };
+      cloud_worker_minutes: { used: number; limit: number; pct: number };
+      concurrent_builds: { used: number; limit: number; pct: number };
+    };
+    status: string;
+  }>("/api/v1/saas/usage/summary");
+}
+
+export async function fetchInvoices() {
+  return fetchJSON<Array<{
+    id: string;
+    invoice_number: string;
+    amount: number;
+    currency: string;
+    status: string;
+    period_start: string;
+    period_end: string;
+    pdf_url?: string;
+    created_at: string;
+  }>>("/api/v1/saas/billing/invoices");
+}
+
+export async function processSaaSPayment(payload: {
+  amount: number;
+  currency?: string;
+  gateway?: string;
+  description?: string;
+}) {
+  return fetchJSON<{
+    id: string;
+    status: string;
+    amount: number;
+    currency: string;
+    receipt_url?: string;
+  }>("/api/v1/saas/billing/process-payment", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function fetchAIProviders() {
+  return fetchJSON<Array<{
+    id: string;
+    provider: string;
+    model_name: string;
+    cost_per_1k_input: number;
+    cost_per_1k_output: number;
+    is_default: boolean;
+    capabilities: any;
+  }>>("/api/v1/saas/providers");
+}
+
+export async function fetchCredentials() {
+  return fetchJSON<Array<{
+    id: string;
+    tenant_id: string;
+    provider: string;
+    credential_type: string;
+    key_identifier?: string;
+    scopes: string[];
+    is_active: boolean;
+    created_at: string;
+  }>>("/api/v1/saas/credentials");
+}
+
+export async function storeCredential(payload: {
+  provider: string;
+  credential_type: string;
+  secret_value: string;
+  key_identifier?: string;
+  scopes?: string[];
+}) {
+  return fetchJSON<{ status: string; id: string; provider: string }>(
+    "/api/v1/saas/credentials",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }
+  );
+}
+
+export async function fetchSupportTickets() {
+  return fetchJSON<Array<{
+    id: string;
+    subject: string;
+    status: string;
+    priority: string;
+    category: string;
+    created_at: string;
+  }>>("/api/v1/saas/support/tickets");
+}
+
+export async function createSupportTicket(payload: {
+  subject: string;
+  message: string;
+  category?: string;
+  priority?: string;
+}) {
+  return fetchJSON<{ id: string; subject: string; status: string }>(
+    "/api/v1/saas/support/tickets",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }
+  );
+}
+
+export async function fetchNotifications() {
+  return fetchJSON<Array<{
+    id: string;
+    title: string;
+    message: string;
+    severity: string;
+    action_url?: string;
+    is_read: boolean;
+    created_at: string;
+  }>>("/api/v1/saas/notifications");
+}
+
+export async function fetchAdminMetrics() {
+  return fetchJSON<{
+    tenants: { total: number; active: number; suspended: number };
+    subscriptions: { active_count: number; by_tier: Record<string, number>; mrr: number; arr: number; currency: string };
+    financials: { total_revenue_collected: number; estimated_ai_cost: number; gross_margin_pct: number };
+    usage: { total_ai_tokens: number };
+  }>("/api/v1/saas/admin/metrics");
+}
+
+export async function fetchAdminTenants() {
+  return fetchJSON<Array<{
+    id: string;
+    name: string;
+    slug: string;
+    status: string;
+    plan_name: string;
+    plan_tier: string;
+    owner_email: string;
+    current_month_tokens: number;
+    created_at: string;
+  }>>("/api/v1/saas/admin/tenants");
+}
+
+export async function suspendTenant(tenantId: string, reason: string) {
+  return fetchJSON<{ status: string; tenant_id: string }>(
+    `/api/v1/saas/admin/tenants/${tenantId}/suspend`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reason }),
+    }
+  );
+}
+
+export async function reactivateTenant(tenantId: string) {
+  return fetchJSON<{ status: string; tenant_id: string }>(
+    `/api/v1/saas/admin/tenants/${tenantId}/reactivate`,
+    {
+      method: "POST",
+    }
+  );
+}
+

@@ -33,10 +33,13 @@ class User(Base):
     __tablename__ = "users"
 
     id = Column(String(36), primary_key=True, default=generate_uuid)
+    tenant_id = Column(String(36), ForeignKey("tenants.id"), nullable=True, index=True)
     email = Column(String(255), unique=True, nullable=False, index=True)
+    password_hash = Column(String(255), nullable=True)
     full_name = Column(String(255), nullable=True)
-    role = Column(String(50), default="developer")  # admin, architect, developer
+    role = Column(String(50), default="developer")  # admin, architect, developer, owner, viewer
     is_active = Column(Boolean, default=True)
+    is_verified = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     projects = relationship("Project", back_populates="owner")
@@ -47,6 +50,8 @@ class Project(Base):
     __tablename__ = "projects"
 
     id = Column(String(36), primary_key=True, default=generate_uuid)
+    tenant_id = Column(String(36), ForeignKey("tenants.id"), nullable=True, index=True)
+    organization_id = Column(String(36), ForeignKey("organizations.id"), nullable=True, index=True)
     name = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
     requirement_text = Column(Text, nullable=False)
@@ -903,4 +908,242 @@ class ContinuousImprovementProposal(Base):
 
     project = relationship("Project")
     approval = relationship("ApprovalRecord")
+
+
+# ---------------------------------------------------------------------------
+# Phase 9: Multi-Tenant SaaS Platform, Billing & Customer Management
+# ---------------------------------------------------------------------------
+class Tenant(Base):
+    __tablename__ = "tenants"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    name = Column(String(255), nullable=False)
+    status = Column(String(50), default="active")  # active, suspended, deleted
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    organizations = relationship("Organization", back_populates="tenant", cascade="all, delete-orphan")
+
+
+class Organization(Base):
+    __tablename__ = "organizations"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    tenant_id = Column(String(36), ForeignKey("tenants.id"), nullable=False, index=True)
+    name = Column(String(255), nullable=False)
+    slug = Column(String(255), nullable=False, unique=True, index=True)
+    billing_email = Column(String(255), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    tenant = relationship("Tenant", back_populates="organizations")
+    members = relationship("OrganizationMember", back_populates="organization", cascade="all, delete-orphan")
+    invitations = relationship("OrganizationInvitation", back_populates="organization", cascade="all, delete-orphan")
+
+
+class OrganizationMember(Base):
+    __tablename__ = "organization_members"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    organization_id = Column(String(36), ForeignKey("organizations.id"), nullable=False, index=True)
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    role = Column(String(50), default="developer")  # owner, admin, billing_admin, project_manager, developer, qa_engineer, viewer, collaborator
+    is_active = Column(Boolean, default=True)
+    joined_at = Column(DateTime, default=datetime.utcnow)
+
+    organization = relationship("Organization", back_populates="members")
+    user = relationship("User")
+
+
+class OrganizationInvitation(Base):
+    __tablename__ = "organization_invitations"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    organization_id = Column(String(36), ForeignKey("organizations.id"), nullable=False, index=True)
+    email = Column(String(255), nullable=False, index=True)
+    role = Column(String(50), default="developer")
+    token = Column(String(100), nullable=False, unique=True, index=True)
+    status = Column(String(50), default="pending")  # pending, accepted, expired, revoked
+    invited_by_id = Column(String(36), ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    expires_at = Column(DateTime, nullable=False)
+
+    organization = relationship("Organization", back_populates="invitations")
+
+
+class SubscriptionPlan(Base):
+    __tablename__ = "subscription_plans"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    plan_code = Column(String(50), unique=True, nullable=False, index=True)  # free, starter, professional, business, enterprise
+    name = Column(String(100), nullable=False)
+    description = Column(Text, nullable=True)
+    price_monthly_usd = Column(Float, default=0.0)
+    price_yearly_usd = Column(Float, default=0.0)
+    limits_json = Column(JSON, default=dict)  # max_projects, max_monthly_executions, max_tokens, concurrency_limit, autonomous_deployment_allowed
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class SubscriptionRecord(Base):
+    __tablename__ = "subscriptions"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    tenant_id = Column(String(36), ForeignKey("tenants.id"), nullable=False, index=True)
+    organization_id = Column(String(36), ForeignKey("organizations.id"), nullable=False, index=True)
+    plan_id = Column(String(36), ForeignKey("subscription_plans.id"), nullable=False, index=True)
+    status = Column(String(50), default="active")  # active, trialing, past_due, canceled, incomplete
+    billing_interval = Column(String(20), default="monthly")  # monthly, yearly
+    current_period_start = Column(DateTime, default=datetime.utcnow)
+    current_period_end = Column(DateTime, nullable=False)
+    cancel_at_period_end = Column(Boolean, default=False)
+    provider = Column(String(50), default="stripe")  # stripe, razorpay, manual
+    provider_subscription_id = Column(String(100), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    plan = relationship("SubscriptionPlan")
+    tenant = relationship("Tenant")
+    organization = relationship("Organization")
+
+
+class PaymentTransaction(Base):
+    __tablename__ = "payment_transactions"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    tenant_id = Column(String(36), ForeignKey("tenants.id"), nullable=False, index=True)
+    organization_id = Column(String(36), ForeignKey("organizations.id"), nullable=False, index=True)
+    subscription_id = Column(String(36), ForeignKey("subscriptions.id"), nullable=True)
+    amount = Column(Float, nullable=False)
+    currency = Column(String(10), default="USD")  # USD, INR
+    provider = Column(String(50), default="stripe")  # stripe, razorpay
+    provider_payment_id = Column(String(100), nullable=True, index=True)
+    idempotency_key = Column(String(100), nullable=False, unique=True, index=True)
+    status = Column(String(50), default="succeeded")  # succeeded, failed, pending, refunded
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class InvoiceRecord(Base):
+    __tablename__ = "invoices"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    tenant_id = Column(String(36), ForeignKey("tenants.id"), nullable=False, index=True)
+    organization_id = Column(String(36), ForeignKey("organizations.id"), nullable=False, index=True)
+    invoice_number = Column(String(100), unique=True, nullable=False, index=True)
+    amount_due = Column(Float, nullable=False)
+    amount_paid = Column(Float, default=0.0)
+    currency = Column(String(10), default="USD")
+    status = Column(String(50), default="paid")  # paid, open, void
+    due_date = Column(DateTime, nullable=True)
+    paid_at = Column(DateTime, nullable=True)
+    invoice_pdf_url = Column(String(500), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class PaymentWebhookEvent(Base):
+    __tablename__ = "payment_webhook_events"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    provider = Column(String(50), nullable=False)  # stripe, razorpay
+    event_id = Column(String(100), nullable=False, unique=True, index=True)
+    event_type = Column(String(100), nullable=False)
+    payload_json = Column(JSON, default=dict)
+    processed = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class UsageEvent(Base):
+    __tablename__ = "usage_events"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    tenant_id = Column(String(36), ForeignKey("tenants.id"), nullable=False, index=True)
+    project_id = Column(String(36), nullable=True, index=True)
+    metric_type = Column(String(50), nullable=False, index=True)  # ai_tokens, worker_minutes, build_minutes, storage_mb, deployments
+    quantity = Column(Float, nullable=False)
+    cost_usd = Column(Float, default=0.0)
+    dimensions_json = Column(JSON, default=dict)  # model_name, provider, etc.
+    timestamp = Column(DateTime, default=datetime.utcnow, index=True)
+
+
+class QuotaPolicy(Base):
+    __tablename__ = "quota_policies"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    tenant_id = Column(String(36), ForeignKey("tenants.id"), nullable=False, index=True)
+    metric_type = Column(String(50), nullable=False)
+    hard_limit = Column(Float, nullable=False)
+    soft_alert_threshold = Column(Float, nullable=False)
+    current_usage = Column(Float, default=0.0)
+    reset_period = Column(String(20), default="monthly")  # monthly, daily
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ModelProviderRecord(Base):
+    __tablename__ = "model_providers"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    provider_name = Column(String(50), nullable=False)  # openai, gemini, anthropic
+    model_name = Column(String(100), nullable=False, unique=True)
+    input_cost_per_1k = Column(Float, default=0.0015)
+    output_cost_per_1k = Column(Float, default=0.002)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class CustomerIntegrationCredential(Base):
+    __tablename__ = "customer_integrations"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    tenant_id = Column(String(36), ForeignKey("tenants.id"), nullable=False, index=True)
+    platform = Column(String(50), nullable=False)  # github, meta, aws, google
+    encrypted_access_token = Column(Text, nullable=False)
+    encrypted_secret = Column(Text, nullable=True)
+    expires_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class SupportTicket(Base):
+    __tablename__ = "support_tickets"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    tenant_id = Column(String(36), ForeignKey("tenants.id"), nullable=False, index=True)
+    created_by_user_id = Column(String(36), ForeignKey("users.id"), nullable=False)
+    title = Column(String(255), nullable=False)
+    category = Column(String(50), default="general")  # billing, technical, quota, bug
+    priority = Column(String(50), default="medium")  # low, medium, high, urgent
+    status = Column(String(50), default="open")  # open, in_progress, resolved, closed
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    messages = relationship("SupportMessage", back_populates="ticket", cascade="all, delete-orphan")
+
+
+class SupportMessage(Base):
+    __tablename__ = "support_messages"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    ticket_id = Column(String(36), ForeignKey("support_tickets.id"), nullable=False, index=True)
+    sender_user_id = Column(String(36), ForeignKey("users.id"), nullable=False)
+    sender_role = Column(String(50), default="customer")  # customer, support_agent
+    message_body = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    ticket = relationship("SupportTicket", back_populates="messages")
+
+
+class TenantNotification(Base):
+    __tablename__ = "tenant_notifications"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    tenant_id = Column(String(36), ForeignKey("tenants.id"), nullable=False, index=True)
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=True)
+    title = Column(String(255), nullable=False)
+    message = Column(Text, nullable=False)
+    notification_type = Column(String(50), default="workflow")  # billing, quota, security, workflow
+    is_read = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
 

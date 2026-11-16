@@ -23,6 +23,7 @@ import {
   Settings,
   HeartPulse,
   Wrench,
+  CreditCard,
 } from "lucide-react";
 
 export type ModuleKey =
@@ -46,7 +47,8 @@ export type ModuleKey =
   | "deployment"
   | "approvals"
   | "costs"
-  | "settings";
+  | "settings"
+  | "saas_billing";
 
 interface SidebarProps {
   currentModule: ModuleKey;
@@ -112,6 +114,12 @@ export function Sidebar({ currentModule, onSelectModule, pendingApprovalsCount =
           badge: pendingApprovalsCount > 0 ? `${pendingApprovalsCount}` : undefined,
           badgeAlert: pendingApprovalsCount > 0,
         },
+      ],
+    },
+    {
+      title: "Commercial & SaaS",
+      items: [
+        { key: "saas_billing" as ModuleKey, label: "SaaS & Subscriptions", icon: CreditCard, badge: "SaaS" },
       ],
     },
     {

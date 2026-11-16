@@ -44,6 +44,7 @@ const moduleTitles: Record<ModuleKey, { title: string; subtitle: string }> = {
   approvals: { title: "Human Governance & Approvals", subtitle: "Mandatory human sign-off gates for production and sensitive operations" },
   costs: { title: "Cost & FinOps Management", subtitle: "AI token consumption, compute costs, and cloud infrastructure budgets" },
   settings: { title: "System Configuration", subtitle: "Factory engine settings, LLM provider routing, and security keys" },
+  saas_billing: { title: "SaaS Workspace & Commercial Billing", subtitle: "Multi-tenant subscriptions, quota management, Stripe/Razorpay payments & platform analytics" },
 };
 
 export function Header({

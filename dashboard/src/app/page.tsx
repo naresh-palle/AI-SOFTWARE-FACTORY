@@ -28,6 +28,7 @@ import { DeploymentCenterView } from "@/components/views/DeploymentCenterView";
 import { ApprovalCenterView } from "@/components/views/ApprovalCenterView";
 import { CostManagementView } from "@/components/views/CostManagementView";
 import { SystemSettingsView } from "@/components/views/SystemSettingsView";
+import SaaSWorkspaceView from "@/components/views/SaaSWorkspaceView";
 
 export default function DashboardPage() {
   const [currentModule, setCurrentModule] = useState<ModuleKey>("overview");
@@ -134,6 +135,7 @@ export default function DashboardPage() {
           )}
           {currentModule === "costs" && <CostManagementView />}
           {currentModule === "settings" && <SystemSettingsView />}
+          {currentModule === "saas_billing" && <SaaSWorkspaceView />}
         </main>
       </div>
     </div>
