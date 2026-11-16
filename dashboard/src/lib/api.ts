@@ -5,12 +5,32 @@
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
+const AUTH_STORAGE_KEY = "palram_studio_token";
+
+export function getStudioAccessToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return window.localStorage.getItem(AUTH_STORAGE_KEY);
+}
+
+export function setStudioAccessToken(token: string | null): void {
+  if (typeof window === "undefined") return;
+  if (!token) {
+    window.localStorage.removeItem(AUTH_STORAGE_KEY);
+    return;
+  }
+  window.localStorage.setItem(AUTH_STORAGE_KEY, token);
+}
+
 async function fetchJSON<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const url = `${API_BASE}${endpoint}`;
-  const headers = {
+  const token = getStudioAccessToken();
+  const headers: Record<string, string> = {
     "Content-Type": "application/json",
-    ...(options.headers || {}),
+    ...((options.headers as Record<string, string>) || {}),
   };
+  if (token && !headers.Authorization) {
+    headers.Authorization = `Bearer ${token}`;
+  }
 
   const response = await fetch(url, { ...options, headers });
   if (!response.ok) {
@@ -18,6 +38,42 @@ async function fetchJSON<T>(endpoint: string, options: RequestInit = {}): Promis
     throw new Error(`API Error ${response.status}: ${errorText || response.statusText}`);
   }
   return response.json();
+}
+
+export async function registerStudioCustomer(payload: {
+  name: string;
+  email: string;
+  password: string;
+  organization_name: string;
+  plan_tier?: string;
+}) {
+  return fetchJSON<{
+    status: string;
+    registration_status: string;
+    message?: string;
+    access_token?: string;
+    token?: string;
+    tenant: { id: string; name: string; status?: string };
+    organization: { id: string; name: string };
+    user: { id: string; email: string; full_name: string; role: string };
+  }>("/api/v1/saas/auth/register", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function loginStudioCustomer(payload: { email: string; password: string }) {
+  const result = await fetchJSON<{
+    access_token: string;
+    token?: string;
+    user?: { id: string; email: string; role: string };
+  }>("/api/v1/saas/auth/login", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  const token = result.access_token || result.token;
+  if (token) setStudioAccessToken(token);
+  return result;
 }
 
 // System & Health

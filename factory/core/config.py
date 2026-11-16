@@ -61,6 +61,25 @@ class Settings(BaseSettings):
     # Production refuses to serve the API when this is empty.
     FACTORY_API_TOKEN: Optional[str] = None
 
+    # Soft-launch registration: invite_only | open
+    # invite_only creates pending tenants until an administrator approves.
+    REGISTRATION_MODE: str = "invite_only"
+
+    # Comma-separated browser origins allowed to call the API.
+    # Empty means local defaults in non-production; production requires an explicit list.
+    CORS_ALLOWED_ORIGINS: str = (
+        "http://127.0.0.1:3000,http://localhost:3000,"
+        "https://palramai.in,https://www.palramai.in,https://app.palramai.in"
+    )
+
+    # Public URLs (documentation / Studio redirects). Hosting may be pending.
+    PUBLIC_WEBSITE_URL: str = "https://palramai.in"
+    PUBLIC_APP_URL: str = "https://app.palramai.in"
+    PUBLIC_API_URL: str = "https://api.palramai.in"
+
+    # Allow X-Tenant-Id auth bypass only for local/testing automation.
+    ALLOW_TENANT_HEADER_AUTH: bool = False
+
     # LLM Providers
     DEFAULT_LLM_PROVIDER: str = "mock"  # mock, ollama, openai, gemini, anthropic
     OPENAI_API_KEY: Optional[str] = None
@@ -142,6 +161,29 @@ def enforce_production_secrets(
     if unsafe:
         names = ", ".join(unsafe)
         raise RuntimeError(f"Refusing to start in production with default or empty secrets: {names}")
+
+
+def cors_allow_origins(settings_obj: "Settings") -> list[str]:
+    """Parse CORS origins. Production never falls back to wildcard."""
+    raw = (settings_obj.CORS_ALLOWED_ORIGINS or "").strip()
+    origins = [part.strip() for part in raw.split(",") if part.strip()]
+    if origins:
+        return origins
+    if settings_obj.ENVIRONMENT == EnvironmentType.PRODUCTION:
+        raise RuntimeError("CORS_ALLOWED_ORIGINS must be set in production")
+    return [
+        "http://127.0.0.1:3000",
+        "http://localhost:3000",
+        "http://127.0.0.1:4173",
+        "http://localhost:4173",
+    ]
+
+
+def registration_requires_approval(settings_obj: "Settings") -> bool:
+    mode = (settings_obj.REGISTRATION_MODE or "invite_only").strip().lower()
+    if mode == "open":
+        return False
+    return True
 
 
 settings = Settings()

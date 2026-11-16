@@ -73,12 +73,17 @@ async def test_create_project_and_get():
 
 
 @pytest.mark.asyncio
-async def test_cors_does_not_send_credentials_for_wildcard_origins():
+async def test_cors_allowlist_rejects_unknown_origins():
+    """CORS uses an explicit allowlist — unknown origins must not be reflected."""
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        res = await client.get("/health", headers={"Origin": "https://evil.example"})
-        assert res.status_code == 200
-        assert res.headers.get("access-control-allow-credentials") != "true"
+        evil = await client.get("/health", headers={"Origin": "https://evil.example"})
+        assert evil.status_code == 200
+        assert evil.headers.get("access-control-allow-origin") != "https://evil.example"
+
+        allowed = await client.get("/health", headers={"Origin": "https://palramai.in"})
+        assert allowed.status_code == 200
+        assert allowed.headers.get("access-control-allow-origin") == "https://palramai.in"
 
 
 @pytest.mark.asyncio

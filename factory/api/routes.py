@@ -52,18 +52,10 @@ def _constant_time_equal(provided: str, expected: str) -> bool:
 
 
 async def require_operator(authorization: Optional[str] = Header(default=None)) -> None:
-    """Protect operator routes when a token is configured, and always in production."""
-    configured = settings.FACTORY_API_TOKEN or ""
-    if settings.ENVIRONMENT == EnvironmentType.PRODUCTION and not configured:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Operator authentication is not configured",
-        )
-    if not configured:
-        return
-    expected = f"Bearer {configured}"
-    if not _constant_time_equal(authorization or "", expected):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
+    """Protect /api/v1 routes with operator token or customer Studio JWT."""
+    from factory.api.auth_deps import require_api_access
+
+    require_api_access(authorization)
 
 
 api = APIRouter(prefix="/api/v1", dependencies=[Depends(require_operator)])
@@ -130,14 +122,24 @@ async def analyze_requirement(req: AnalyzeRequest):
 
 
 @api.post("/projects", status_code=status.HTTP_201_CREATED, tags=["Projects"])
-async def create_project(req: CreateProjectRequest):
-    """Initialize a new autonomous software project."""
+async def create_project(
+    req: CreateProjectRequest,
+    authorization: Optional[str] = Header(default=None),
+    x_tenant_id: Optional[str] = Header(default=None),
+):
+    """Initialize a new autonomous software project (tenant-scoped for Studio customers)."""
+    from factory.api.auth_deps import resolve_studio_auth
+
+    auth = resolve_studio_auth(authorization, x_tenant_id)
     try:
         project = await orchestrator.initialize_project(
             name=req.name,
             requirement_text=req.requirement_text,
             platform_target=req.platform_target,
             execution_mode=req.execution_mode,
+            owner_id=auth.get("user_id"),
+            tenant_id=auth.get("tenant_id"),
+            organization_id=auth.get("organization_id"),
         )
         state = await orchestrator.get_orchestration_state(project.id)
         return {"project_id": project.id, "name": project.name, "state": state}
@@ -147,9 +149,18 @@ async def create_project(req: CreateProjectRequest):
 
 
 @api.get("/projects", tags=["Projects"])
-async def list_projects(db: AsyncSession = Depends(get_db)):
-    """List all registered projects."""
+async def list_projects(
+    db: AsyncSession = Depends(get_db),
+    authorization: Optional[str] = Header(default=None),
+    x_tenant_id: Optional[str] = Header(default=None),
+):
+    """List projects visible to the caller (tenant-scoped for Studio customers)."""
+    from factory.api.auth_deps import resolve_studio_auth
+
+    auth = resolve_studio_auth(authorization, x_tenant_id)
     stmt = select(Project).order_by(desc(Project.created_at))
+    if auth.get("auth_type") == "customer" and auth.get("tenant_id"):
+        stmt = stmt.where(Project.tenant_id == auth["tenant_id"])
     res = await db.execute(stmt)
     projects = res.scalars().all()
     return [
@@ -160,6 +171,7 @@ async def list_projects(db: AsyncSession = Depends(get_db)):
             "execution_mode": p.execution_mode,
             "status": p.status,
             "current_stage": p.current_stage,
+            "tenant_id": p.tenant_id,
             "created_at": p.created_at,
         }
         for p in projects

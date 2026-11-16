@@ -918,7 +918,7 @@ class Tenant(Base):
 
     id = Column(String(36), primary_key=True, default=generate_uuid)
     name = Column(String(255), nullable=False)
-    status = Column(String(50), default="active")  # active, suspended, deleted
+    status = Column(String(50), default="active")  # pending_approval, active, suspended, deleted
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

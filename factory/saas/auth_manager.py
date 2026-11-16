@@ -15,7 +15,7 @@ from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from factory.core.logger import logger
-from factory.core.config import settings
+from factory.core.config import registration_requires_approval, settings
 from factory.models.schema import User, Tenant, Organization, OrganizationMember
 from factory.saas.tenant_manager import TenantManager, TenantContext
 
@@ -102,6 +102,8 @@ class CustomerAuthManager:
         password: str,
         full_name: str,
         organization_name: str,
+        *,
+        require_approval: Optional[bool] = None,
     ) -> Dict[str, Any]:
         """
         Complete customer onboarding workflow:
@@ -110,8 +112,14 @@ class CustomerAuthManager:
         3. Create User record with hashed password
         4. Provision initial Organization
         5. Assign User as Organization 'owner'
-        6. Issue verification token and active JWT
+        6. Issue JWT only when registration is auto-approved (open mode)
         """
+        pending = (
+            registration_requires_approval(settings)
+            if require_approval is None
+            else require_approval
+        )
+
         # Check duplicate user
         q_user = select(User).where(User.email == email.lower().strip())
         existing = (await db.execute(q_user)).scalar_one_or_none()
@@ -121,6 +129,9 @@ class CustomerAuthManager:
         # 1. Provision Tenant
         tenant_mgr = TenantManager()
         tenant = await tenant_mgr.create_tenant(db, name=f"{organization_name} Tenant")
+        if pending:
+            tenant.status = "pending_approval"
+            tenant.updated_at = datetime.utcnow()
 
         # 2. Create User
         pw_hash = self.hash_password(password)
@@ -130,8 +141,8 @@ class CustomerAuthManager:
             password_hash=pw_hash,
             full_name=full_name,
             role="owner",
-            is_active=True,
-            is_verified=True,  # Activated upon registration in demo sandbox
+            is_active=not pending,
+            is_verified=not pending,
             created_at=datetime.utcnow(),
         )
         db.add(user)
@@ -160,7 +171,26 @@ class CustomerAuthManager:
         db.add(member)
         await db.commit()
 
-        # 5. Issue JWT
+        base = {
+            "user_id": user.id,
+            "email": user.email,
+            "full_name": user.full_name,
+            "tenant_id": tenant.id,
+            "organization_id": org.id,
+            "organization_name": org.name,
+            "role": "owner",
+            "status": "pending_approval" if pending else "active",
+            "registration_status": "pending_approval" if pending else "active",
+        }
+
+        if pending:
+            logger.info(
+                f"Customer registration pending approval: {user.email} "
+                f"(Tenant: {tenant.id}, Org: {org.id})"
+            )
+            return base
+
+        # 5. Issue JWT for open registration
         token = self.create_jwt_token({
             "user_id": user.id,
             "email": user.email,
@@ -171,15 +201,40 @@ class CustomerAuthManager:
 
         logger.info(f"Customer registered successfully: {user.email} (Tenant: {tenant.id}, Org: {org.id})")
         return {
+            **base,
             "token": token,
             "access_token": token,
-            "user_id": user.id,
-            "email": user.email,
-            "full_name": user.full_name,
+        }
+
+    async def approve_registration(
+        self,
+        db: AsyncSession,
+        tenant_id: str,
+    ) -> Dict[str, Any]:
+        """Administrator approval for invite-only soft-launch registrations."""
+        q = select(Tenant).where(Tenant.id == tenant_id)
+        tenant = (await db.execute(q)).scalar_one_or_none()
+        if not tenant:
+            raise ValueError(f"Tenant {tenant_id} not found")
+        if tenant.status == "suspended":
+            raise ValueError("Suspended tenants must be reactivated, not approved.")
+
+        tenant.status = "active"
+        tenant.updated_at = datetime.utcnow()
+
+        users = (
+            await db.execute(select(User).where(User.tenant_id == tenant_id))
+        ).scalars().all()
+        for user in users:
+            user.is_active = True
+            user.is_verified = True
+
+        await db.commit()
+        logger.info(f"Registration approved for tenant {tenant_id}")
+        return {
+            "status": "active",
             "tenant_id": tenant.id,
-            "organization_id": org.id,
-            "organization_name": org.name,
-            "role": "owner",
+            "activated_users": len(users),
         }
 
     async def authenticate_customer(
@@ -197,6 +252,18 @@ class CustomerAuthManager:
 
         if not self.verify_password(password, user.password_hash):
             raise ValueError("Invalid email or password.")
+
+        if user.tenant_id:
+            tenant = (
+                await db.execute(select(Tenant).where(Tenant.id == user.tenant_id))
+            ).scalar_one_or_none()
+            if tenant and tenant.status == "pending_approval":
+                raise ValueError(
+                    "Registration is pending administrator approval. "
+                    "You will be able to sign in after approval."
+                )
+            if tenant and tenant.status == "suspended":
+                raise ValueError("Account is suspended.")
 
         if not user.is_active:
             raise ValueError("Account is suspended.")

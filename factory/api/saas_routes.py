@@ -4,9 +4,10 @@ FastAPI Routes for Multi-Tenant SaaS Platform, Customer Management & Billing Eng
 
 from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
-from fastapi import APIRouter, HTTPException, Header, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Header, Query, Request, status
 from pydantic import BaseModel, Field
 
+from factory.api.auth_deps import extract_saas_auth_context, require_platform_admin
 from factory.core.database import get_db_session
 from factory.core.logger import logger
 from factory.saas.tenant_manager import TenantManager, TenantIsolationError
@@ -111,15 +112,7 @@ class OverrideQuotaRequest(BaseModel):
 # ---------------------------------------------------------
 
 def _extract_auth_context(authorization: Optional[str], x_tenant_id: Optional[str] = None) -> Dict[str, Any]:
-    if authorization and authorization.startswith("Bearer "):
-        token = authorization.split("Bearer ")[1].strip()
-        try:
-            return CustomerAuthManager.decode_jwt_token(token)
-        except Exception as e:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=f"Invalid token: {e}")
-    if x_tenant_id:
-        return {"tenant_id": x_tenant_id, "user_id": "test_user_id", "email": "system@tenant.local", "role": "owner"}
-    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing authorization credentials")
+    return extract_saas_auth_context(authorization, x_tenant_id)
 
 
 # ---------------------------------------------------------
@@ -128,7 +121,11 @@ def _extract_auth_context(authorization: Optional[str], x_tenant_id: Optional[st
 
 @router.post("/auth/register")
 async def register_customer(payload: CustomerRegisterRequest):
-    """Register new customer account with tenant and default organization."""
+    """Register new customer account with tenant and default organization.
+
+    Soft launch defaults to invite-only: account is created as pending_approval
+    until a platform administrator approves the tenant.
+    """
     async with get_db_session() as session:
         await sub_mgr.initialize_plans(session)
         await ModelCatalogManager.seed_default_providers(session)
@@ -141,14 +138,52 @@ async def register_customer(payload: CustomerRegisterRequest):
                 full_name=payload.name,
                 organization_name=payload.organization_name
             )
+            pending = result.get("registration_status") == "pending_approval"
+            if pending:
+                await NotificationManager.create_notification(
+                    db=session,
+                    tenant_id=result["tenant_id"],
+                    title="Registration received — awaiting approval",
+                    message=(
+                        f"Thanks {payload.name}. Your PALRAM AI Studio access request "
+                        "is pending administrator approval."
+                    ),
+                    severity="info"
+                )
+                return {
+                    "status": "pending_approval",
+                    "registration_status": "pending_approval",
+                    "message": (
+                        "Registration received. An administrator must approve "
+                        "your account before you can sign in."
+                    ),
+                    "user": {
+                        "id": result["user_id"],
+                        "email": result["email"],
+                        "full_name": result["full_name"],
+                        "role": result["role"]
+                    },
+                    "tenant": {
+                        "id": result["tenant_id"],
+                        "name": payload.organization_name,
+                        "status": "pending_approval",
+                    },
+                    "organization": {
+                        "id": result["organization_id"],
+                        "name": result["organization_name"]
+                    }
+                }
+
             await NotificationManager.create_notification(
                 db=session,
                 tenant_id=result["tenant_id"],
-                title="Welcome to AI Software Factory SaaS!",
+                title="Welcome to PALRAM AI Studio!",
                 message=f"Welcome {payload.name}! Workspace activated under the {payload.plan_tier.upper()} plan.",
                 severity="info"
             )
             return {
+                "status": "active",
+                "registration_status": "active",
                 "access_token": result["token"],
                 "token": result["token"],
                 "user": {
@@ -160,6 +195,7 @@ async def register_customer(payload: CustomerRegisterRequest):
                 "tenant": {
                     "id": result["tenant_id"],
                     "name": payload.organization_name,
+                    "status": "active",
                 },
                 "organization": {
                     "id": result["organization_id"],
@@ -731,24 +767,55 @@ async def mark_notification_read(
 
 # ---------------------------------------------------------
 # SaaS Administration Console Endpoints
+# Protected: FACTORY_API_TOKEN or platform-admin JWT.
+# No public admin.palramai.in in soft launch — reuse this API surface.
 # ---------------------------------------------------------
 
 @router.get("/admin/metrics")
-async def get_admin_metrics():
+async def get_admin_metrics(_admin: Dict[str, Any] = Depends(require_platform_admin)):
     """Platform owner analytics: MRR, ARR, tenant counts, gross margin, usage."""
     async with get_db_session() as session:
         return await SaaSAdminConsole.get_platform_metrics(session)
 
 
 @router.get("/admin/tenants")
-async def list_admin_tenants(limit: int = 50, status: Optional[str] = None):
+async def list_admin_tenants(
+    limit: int = 50,
+    status: Optional[str] = None,
+    _admin: Dict[str, Any] = Depends(require_platform_admin),
+):
     """List all tenants across the platform with subscription and usage status."""
     async with get_db_session() as session:
         return await SaaSAdminConsole.list_all_tenants(session, limit, status)
 
 
+@router.post("/admin/tenants/{tenant_id}/approve")
+async def approve_tenant_registration(
+    tenant_id: str,
+    _admin: Dict[str, Any] = Depends(require_platform_admin),
+):
+    """Approve an invite-only soft-launch registration request."""
+    async with get_db_session() as session:
+        try:
+            result = await auth_mgr.approve_registration(session, tenant_id)
+            await NotificationManager.create_notification(
+                db=session,
+                tenant_id=tenant_id,
+                title="Studio access approved",
+                message="Your PALRAM AI Studio account is active. You can sign in now.",
+                severity="info",
+            )
+            return result
+        except ValueError as e:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+
 @router.post("/admin/tenants/{tenant_id}/suspend")
-async def suspend_tenant(tenant_id: str, payload: SuspendTenantRequest):
+async def suspend_tenant(
+    tenant_id: str,
+    payload: SuspendTenantRequest,
+    _admin: Dict[str, Any] = Depends(require_platform_admin),
+):
     """Platform administrator action to suspend an abusive or non-paying tenant."""
     async with get_db_session() as session:
         t = await SaaSAdminConsole.suspend_tenant(session, tenant_id, payload.reason)
@@ -756,7 +823,10 @@ async def suspend_tenant(tenant_id: str, payload: SuspendTenantRequest):
 
 
 @router.post("/admin/tenants/{tenant_id}/reactivate")
-async def reactivate_tenant(tenant_id: str):
+async def reactivate_tenant(
+    tenant_id: str,
+    _admin: Dict[str, Any] = Depends(require_platform_admin),
+):
     """Reactivate a suspended tenant."""
     async with get_db_session() as session:
         t = await SaaSAdminConsole.reactivate_tenant(session, tenant_id)
@@ -764,7 +834,11 @@ async def reactivate_tenant(tenant_id: str):
 
 
 @router.post("/admin/tenants/{tenant_id}/override-quota")
-async def override_tenant_quota(tenant_id: str, payload: OverrideQuotaRequest):
+async def override_tenant_quota(
+    tenant_id: str,
+    payload: OverrideQuotaRequest,
+    _admin: Dict[str, Any] = Depends(require_platform_admin),
+):
     """Custom quota limit override for enterprise/VIP customers."""
     async with get_db_session() as session:
         policy = await SaaSAdminConsole.override_tenant_quota(

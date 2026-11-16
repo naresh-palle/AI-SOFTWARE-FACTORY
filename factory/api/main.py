@@ -13,7 +13,7 @@ from factory.api.observability_routes import router as observability_router
 from factory.api.maintenance_routes import router as maintenance_router
 from factory.api.saas_routes import router as saas_router
 from factory.api.hypercare_routes import hypercare_router
-from factory.core.config import enforce_production_secrets, settings
+from factory.core.config import cors_allow_origins, enforce_production_secrets, settings
 from factory.core.database import get_db_session, init_db
 from factory.core.security_middleware import (
     SecurityHeadersMiddleware,
@@ -45,13 +45,13 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS configuration
+# CORS configuration — explicit allowlist (never wildcard in production).
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=cors_allow_origins(settings),
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Tenant-Id", "Accept"],
 )
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(RateLimiterMiddleware, max_requests=120, window_seconds=60)

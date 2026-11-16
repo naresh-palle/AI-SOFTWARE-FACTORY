@@ -13,6 +13,12 @@ os.environ["FACTORY_API_TOKEN"] = ""
 os.environ["DEFAULT_LLM_PROVIDER"] = "mock"
 os.environ["DEBUG"] = "false"
 os.environ["FACTORY_ENABLE_GITHUB_PUSH"] = "false"
+# Existing suite expects immediate activation; invite-only covered in integration tests.
+os.environ["REGISTRATION_MODE"] = "open"
+os.environ["ALLOW_TENANT_HEADER_AUTH"] = "true"
+os.environ["CORS_ALLOWED_ORIGINS"] = (
+    "http://127.0.0.1:3000,http://localhost:3000,https://palramai.in,https://app.palramai.in"
+)
 
 import pytest
 

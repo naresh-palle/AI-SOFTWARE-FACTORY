@@ -96,6 +96,8 @@ class MasterOrchestrator:
         platform_target: str = "fullstack",
         execution_mode: str = "autonomous",
         owner_id: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        organization_id: Optional[str] = None,
     ) -> Project:
         """Create new project, run dynamic agent selection, and initialize state."""
         async with get_db_session() as session:
@@ -107,6 +109,8 @@ class MasterOrchestrator:
                 status="planning",
                 current_stage=1,
                 owner_id=owner_id,
+                tenant_id=tenant_id,
+                organization_id=organization_id,
             )
             session.add(project)
             await session.flush()
