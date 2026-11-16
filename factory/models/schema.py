@@ -760,3 +760,147 @@ class SLOConfiguration(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     project = relationship("Project")
+
+
+# ---------------------------------------------------------------------------
+# Phase 8: Autonomous Maintenance & Continuous Improvement Entities
+# ---------------------------------------------------------------------------
+class MaintenancePolicy(Base):
+    __tablename__ = "maintenance_policies"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=False, unique=True)
+    schedule = Column(String(50), default="daily")  # daily, weekly, monthly, on_demand
+    is_enabled = Column(Boolean, default=True)
+    auto_remediate_level1 = Column(Boolean, default=True)
+    require_approval_level2 = Column(Boolean, default=True)
+    maintenance_window = Column(String(100), default="02:00-04:00 UTC")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    project = relationship("Project")
+
+
+class MaintenanceTask(Base):
+    __tablename__ = "maintenance_tasks"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=False, index=True)
+    maintenance_type = Column(String(100), nullable=False)  # code_quality, dependency_update, security_remediation, bug_fix, database_maintenance, performance_optimization, technical_debt, documentation, continuous_improvement
+    trigger_type = Column(String(50), default="scheduled")  # scheduled, on_demand, security_event, incident_event, dependency_event, performance_event
+    schedule = Column(String(50), default="daily")
+    priority = Column(String(50), default="medium")  # low, medium, high, critical
+    assigned_agents = Column(JSON, default=list)
+    status = Column(String(50), default="scheduled")  # scheduled, running, completed, failed, pending_approval
+    results = Column(JSON, default=dict)
+    logs = Column(Text, nullable=True)
+    approval_id = Column(String(36), ForeignKey("approval_records.id"), nullable=True)
+    git_branch = Column(String(200), nullable=True)
+    pull_request_url = Column(String(500), nullable=True)
+    started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    project = relationship("Project")
+    approval = relationship("ApprovalRecord")
+
+
+class CodeQualityReport(Base):
+    __tablename__ = "code_quality_reports"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=False, index=True)
+    task_id = Column(String(36), ForeignKey("maintenance_tasks.id"), nullable=True)
+    quality_score = Column(Float, default=85.0)  # 0 to 100
+    complexity_score = Column(Float, default=12.0)
+    duplication_percent = Column(Float, default=2.5)
+    maintainability_rating = Column(String(10), default="A")  # A, B, C, D, F
+    test_coverage_percent = Column(Float, default=88.5)
+    issues_breakdown = Column(JSON, default=dict)
+    recommendations = Column(JSON, default=list)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    project = relationship("Project")
+    task = relationship("MaintenanceTask")
+
+
+class DependencyVulnerabilityRecord(Base):
+    __tablename__ = "dependency_vulnerabilities"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=False, index=True)
+    package_name = Column(String(150), nullable=False)
+    current_version = Column(String(50), nullable=False)
+    recommended_version = Column(String(50), nullable=False)
+    vulnerability_cve = Column(String(100), nullable=True)
+    severity = Column(String(50), default="medium")  # low, medium, high, critical
+    ecosystem = Column(String(50), default="python")  # python, npm, docker
+    status = Column(String(50), default="open")  # open, remediated, suppressed, pending_approval
+    remediation_branch = Column(String(200), nullable=True)
+    pr_id = Column(String(100), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    resolved_at = Column(DateTime, nullable=True)
+
+    project = relationship("Project")
+
+
+class BugReport(Base):
+    __tablename__ = "bug_reports"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=False, index=True)
+    incident_id = Column(String(36), ForeignKey("incidents.id"), nullable=True)
+    title = Column(String(255), nullable=False)
+    description = Column(Text, nullable=False)
+    reproduction_steps = Column(JSON, default=list)
+    root_cause = Column(Text, nullable=True)
+    affected_files = Column(JSON, default=list)
+    proposed_fix = Column(Text, nullable=True)
+    status = Column(String(50), default="detected")  # detected, reproduced, fix_generated, tested, pr_created, resolved
+    git_branch = Column(String(200), nullable=True)
+    pr_url = Column(String(500), nullable=True)
+    test_evidence = Column(JSON, default=dict)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    resolved_at = Column(DateTime, nullable=True)
+
+    project = relationship("Project")
+    incident = relationship("IncidentRecord")
+
+
+class TechnicalDebtItem(Base):
+    __tablename__ = "technical_debt_items"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=False, index=True)
+    title = Column(String(255), nullable=False)
+    category = Column(String(100), default="code_smell")  # architecture, code_smell, deprecated_api, missing_tests, documentation
+    severity = Column(String(50), default="medium")  # low, medium, high
+    debt_score_impact = Column(Float, default=5.0)
+    effort_hours = Column(Float, default=4.0)
+    remediation_plan = Column(Text, nullable=False)
+    status = Column(String(50), default="backlog")  # backlog, in_progress, resolved
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    project = relationship("Project")
+
+
+class ContinuousImprovementProposal(Base):
+    __tablename__ = "continuous_improvement_proposals"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=False, index=True)
+    title = Column(String(255), nullable=False)
+    category = Column(String(100), default="reliability")  # performance, reliability, security, cost, architecture
+    problem_statement = Column(Text, nullable=False)
+    supporting_evidence = Column(JSON, default=dict)
+    expected_benefit = Column(Text, nullable=False)
+    implementation_complexity = Column(String(50), default="medium")  # low, medium, high
+    potential_risk = Column(String(50), default="low")  # low, medium, high
+    estimated_cost_usd = Column(Float, default=0.0)
+    approval_id = Column(String(36), ForeignKey("approval_records.id"), nullable=True)
+    status = Column(String(50), default="proposed")  # proposed, approved, executing, completed, rejected
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    project = relationship("Project")
+    approval = relationship("ApprovalRecord")
+

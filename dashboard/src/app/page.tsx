@@ -10,6 +10,7 @@ import { fetchProjects, fetchOverviewStats } from "@/lib/api";
 import { OverviewView } from "@/components/views/OverviewView";
 import { CloudExecutionCenterView } from "@/components/views/CloudExecutionCenterView";
 import { ProductionOperationsCenterView } from "@/components/views/ProductionOperationsCenterView";
+import { MaintenanceCenterView } from "@/components/views/MaintenanceCenterView";
 import { CreateProjectView } from "@/components/views/CreateProjectView";
 import { ProjectManagementView } from "@/components/views/ProjectManagementView";
 import { AgentManagementView } from "@/components/views/AgentManagementView";
@@ -122,6 +123,9 @@ export default function DashboardPage() {
           {currentModule === "security" && <SecurityCenterView />}
           {currentModule === "qa" && <QACenterView />}
           {currentModule === "deployment" && <DeploymentCenterView />}
+          {currentModule === "maintenance_center" && (
+            <MaintenanceCenterView projectId={selectedProjectId} />
+          )}
           {currentModule === "approvals" && (
             <ApprovalCenterView
               projectId={selectedProjectId}

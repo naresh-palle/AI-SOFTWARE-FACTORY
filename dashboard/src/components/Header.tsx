@@ -40,6 +40,7 @@ const moduleTitles: Record<ModuleKey, { title: string; subtitle: string }> = {
   security: { title: "Enterprise Security Center", subtitle: "SAST scans, secrets encryption, vulnerability mitigation, and audit trails" },
   qa: { title: "QA & Verification Center", subtitle: "Automated Pytest, API testing, Playwright UI tests, and quality gates" },
   deployment: { title: "Deployment Center", subtitle: "Kubernetes, Docker, AWS infrastructure, and ArgoCD pipelines" },
+  maintenance_center: { title: "Autonomous Maintenance & Continuous Improvement", subtitle: "Post-deployment code quality, dependency CVE upgrades, bug fixing, and technical debt reduction" },
   approvals: { title: "Human Governance & Approvals", subtitle: "Mandatory human sign-off gates for production and sensitive operations" },
   costs: { title: "Cost & FinOps Management", subtitle: "AI token consumption, compute costs, and cloud infrastructure budgets" },
   settings: { title: "System Configuration", subtitle: "Factory engine settings, LLM provider routing, and security keys" },

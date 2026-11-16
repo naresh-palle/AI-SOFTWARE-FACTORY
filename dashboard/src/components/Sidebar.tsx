@@ -22,6 +22,7 @@ import {
   DollarSign,
   Settings,
   HeartPulse,
+  Wrench,
 } from "lucide-react";
 
 export type ModuleKey =
@@ -29,6 +30,7 @@ export type ModuleKey =
   | "create_project"
   | "cloud_execution"
   | "operations_center"
+  | "maintenance_center"
   | "project_management"
   | "agent_management"
   | "execution_monitor"
@@ -102,6 +104,7 @@ export function Sidebar({ currentModule, onSelectModule, pendingApprovalsCount =
         { key: "security" as ModuleKey, label: "Security Center", icon: ShieldAlert },
         { key: "qa" as ModuleKey, label: "QA & Testing", icon: CheckCircle2 },
         { key: "deployment" as ModuleKey, label: "Deployment Center", icon: Rocket },
+        { key: "maintenance_center" as ModuleKey, label: "Autonomous Maintenance", icon: Wrench, badge: "Auto" },
         {
           key: "approvals" as ModuleKey,
           label: "Approval Center",

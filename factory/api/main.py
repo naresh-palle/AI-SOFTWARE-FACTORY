@@ -10,6 +10,7 @@ from factory.api.social_routes import router as social_router
 from factory.api.worker_routes import router as worker_router
 from factory.api.deployment_routes import router as deployment_router
 from factory.api.observability_routes import router as observability_router
+from factory.api.maintenance_routes import router as maintenance_router
 from factory.core.config import enforce_production_secrets, settings
 from factory.core.database import get_db_session, init_db
 from factory.agents.registry import AgentRegistry
@@ -51,6 +52,7 @@ app.include_router(social_router, prefix="/api/v1")
 app.include_router(worker_router, prefix="/api/v1")
 app.include_router(deployment_router, prefix="/api/v1")
 app.include_router(observability_router, prefix="/api/v1")
+app.include_router(maintenance_router, prefix="/api/v1")
 
 
 if __name__ == "__main__":

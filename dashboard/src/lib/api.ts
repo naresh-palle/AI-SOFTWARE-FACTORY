@@ -1084,3 +1084,350 @@ export async function fetchFinOpsRecommendations(projectId?: string) {
     action: string;
   }>>(`/api/v1/observability/finops/recommendations${qs}`);
 }
+
+// ---------------------------------------------------------------------------
+// Phase 8: Autonomous Maintenance & Continuous Improvement APIs
+// ---------------------------------------------------------------------------
+export async function fetchMaintenancePolicy(projectId: string) {
+  return fetchJSON<{
+    id: string;
+    project_id: string;
+    schedule: string;
+    is_enabled: boolean;
+    auto_remediate_level1: boolean;
+    require_approval_level2: boolean;
+    maintenance_window: string;
+  }>(`/api/v1/maintenance/policy?project_id=${projectId}`);
+}
+
+export async function configureMaintenancePolicy(payload: {
+  project_id: string;
+  schedule?: string;
+  is_enabled?: boolean;
+  auto_remediate_level1?: boolean;
+  require_approval_level2?: boolean;
+  maintenance_window?: string;
+}) {
+  return fetchJSON<{ id: string; status: string; schedule: string }>("/api/v1/maintenance/policy", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function fetchMaintenanceTasks(projectId?: string, status?: string) {
+  const params = new URLSearchParams();
+  if (projectId) params.append("project_id", projectId);
+  if (status) params.append("status", status);
+  const qs = params.toString() ? `?${params.toString()}` : "";
+  return fetchJSON<Array<{
+    id: string;
+    project_id: string;
+    maintenance_type: string;
+    trigger_type: string;
+    priority: string;
+    assigned_agents: number[];
+    status: string;
+    git_branch: string;
+    created_at: string;
+    completed_at?: string;
+  }>>(`/api/v1/maintenance/tasks${qs}`);
+}
+
+export async function scheduleMaintenanceTask(payload: {
+  project_id: string;
+  maintenance_type: string;
+  trigger_type?: string;
+  priority?: string;
+}) {
+  return fetchJSON<{
+    id: string;
+    maintenance_type: string;
+    status: string;
+    git_branch: string;
+  }>("/api/v1/maintenance/tasks", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function fetchLatestQualityReport(projectId: string) {
+  return fetchJSON<{
+    id: string;
+    quality_score: number;
+    maintainability_rating: string;
+    complexity_score: number;
+    duplication_percent: number;
+    test_coverage_percent: number;
+    issues_breakdown: Record<string, number>;
+    recommendations: Array<{
+      priority: string;
+      category: string;
+      rule: string;
+      message: string;
+      file: string;
+      remediation: string;
+    }>;
+  }>(`/api/v1/maintenance/quality/latest?project_id=${projectId}`);
+}
+
+export async function runQualityScan(projectId: string) {
+  return fetchJSON<{
+    id: string;
+    quality_score: number;
+    maintainability_rating: string;
+    test_coverage_percent: number;
+    issues_breakdown: Record<string, number>;
+    recommendations: any[];
+  }>("/api/v1/maintenance/quality/scan", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ project_id: projectId }),
+  });
+}
+
+export async function fetchDependencyVulnerabilities(projectId: string) {
+  return fetchJSON<Array<{
+    id: string;
+    package_name: string;
+    current_version: string;
+    recommended_version: string;
+    vulnerability_cve: string;
+    severity: string;
+    ecosystem: string;
+    status: string;
+  }>>(`/api/v1/maintenance/dependencies/scan?project_id=${projectId}`, {
+    method: "POST",
+  });
+}
+
+export async function upgradeDependency(payload: {
+  project_id: string;
+  package_name: string;
+  target_version: string;
+}) {
+  return fetchJSON<{
+    branch_name: string;
+    pr_title: string;
+    target_version: string;
+    approval_id: string;
+    status: string;
+  }>("/api/v1/maintenance/dependencies/upgrade", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function fetchMaintenanceSecurityFindings(projectId: string) {
+  return fetchJSON<Array<{
+    id: string;
+    tool: string;
+    category: string;
+    severity: string;
+    file: string;
+    line: number;
+    description: string;
+    remediation: string;
+  }>>(`/api/v1/maintenance/security/findings?project_id=${projectId}`);
+}
+
+export async function remediateSecurityFinding(payload: {
+  project_id: string;
+  finding_id: string;
+  category: string;
+  file_path: string;
+  proposed_patch?: string;
+}) {
+  return fetchJSON<{
+    finding_id: string;
+    branch_name: string;
+    pr_title: string;
+    approval_id: string;
+    status: string;
+    security_tests_passed: boolean;
+    regression_safe: boolean;
+  }>("/api/v1/maintenance/security/remediate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function fetchBugReports(projectId?: string, status?: string) {
+  const params = new URLSearchParams();
+  if (projectId) params.append("project_id", projectId);
+  if (status) params.append("status", status);
+  const qs = params.toString() ? `?${params.toString()}` : "";
+  return fetchJSON<Array<{
+    id: string;
+    project_id: string;
+    title: string;
+    description: string;
+    status: string;
+    git_branch?: string;
+    pr_url?: string;
+    test_evidence?: any;
+    created_at: string;
+  }>>(`/api/v1/maintenance/bugs${qs}`);
+}
+
+export async function triggerBugFix(bugId: string) {
+  return fetchJSON<{
+    bug_id: string;
+    branch_name: string;
+    pr_url: string;
+    approval_id: string;
+    status: string;
+    test_evidence: any;
+  }>(`/api/v1/maintenance/bugs/${bugId}/fix`, {
+    method: "POST",
+  });
+}
+
+export async function runRegressionSuite(payload: {
+  project_id: string;
+  changed_files?: string[];
+  run_full_suite?: boolean;
+}) {
+  return fetchJSON<{
+    project_id: string;
+    status: string;
+    is_passed: boolean;
+    suites_executed: string[];
+    total_tests: number;
+    passed_tests: number;
+    failed_tests: number;
+    flaky_tests_filtered: number;
+    details_by_suite: any;
+    executed_at: string;
+  }>("/api/v1/maintenance/regression/run", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function fetchDatabaseHealth(projectId: string) {
+  return fetchJSON<{
+    project_id: string;
+    engine: string;
+    connection_pool: any;
+    storage: any;
+    backup_status: any;
+    slow_queries_detected: any[];
+    index_recommendations: any[];
+  }>(`/api/v1/maintenance/database/health?project_id=${projectId}`);
+}
+
+export async function proposeDatabaseIndex(payload: {
+  project_id: string;
+  table_name: string;
+  index_name: string;
+  columns: string[];
+}) {
+  return fetchJSON<{
+    index_name: string;
+    sql: string;
+    approval_id: string;
+    status: string;
+    is_destructive: boolean;
+  }>("/api/v1/maintenance/database/optimize-index", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function fetchPerformanceBottlenecks(projectId: string) {
+  return fetchJSON<{
+    project_id: string;
+    avg_latency_ms: number;
+    bottlenecks_detected: number;
+    bottlenecks: any[];
+  }>(`/api/v1/maintenance/performance/bottlenecks?project_id=${projectId}`);
+}
+
+export async function proposePerformanceOptimization(payload: {
+  project_id: string;
+  optimization_type: string;
+  target_component: string;
+}) {
+  return fetchJSON<{
+    branch_name: string;
+    approval_id: string;
+    benchmark_evidence: any;
+    status: string;
+  }>("/api/v1/maintenance/performance/optimize", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function fetchTechnicalDebt(projectId: string) {
+  return fetchJSON<{
+    project_id: string;
+    technical_debt_score: number;
+    health_grade: string;
+    total_debt_hours: number;
+    open_items_count: number;
+    items: Array<{
+      id: string;
+      title: string;
+      category: string;
+      severity: string;
+      debt_score_impact: number;
+      effort_hours: number;
+      remediation_plan: string;
+      status: string;
+    }>;
+  }>(`/api/v1/maintenance/tech-debt?project_id=${projectId}`);
+}
+
+export async function syncDocumentation(payload: {
+  project_id: string;
+  commit_sha?: string;
+}) {
+  return fetchJSON<{
+    project_id: string;
+    commit_sha?: string;
+    status: string;
+    secret_leak_check: string;
+    updated_documents: any[];
+    last_audited_at: string;
+  }>("/api/v1/maintenance/docs/sync", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function fetchImprovementProposals(projectId: string) {
+  return fetchJSON<Array<{
+    id: string;
+    title: string;
+    category: string;
+    problem_statement: string;
+    supporting_evidence: any;
+    expected_benefit: string;
+    implementation_complexity: string;
+    potential_risk: string;
+    estimated_cost_usd: number;
+    status: string;
+    created_at: string;
+  }>>(`/api/v1/maintenance/improvements?project_id=${projectId}`);
+}
+
+export async function generateImprovementProposals(projectId: string) {
+  return fetchJSON<Array<{
+    id: string;
+    title: string;
+    category: string;
+    expected_benefit: string;
+    status: string;
+  }>>(`/api/v1/maintenance/improvements/generate?project_id=${projectId}`, {
+    method: "POST",
+  });
+}
