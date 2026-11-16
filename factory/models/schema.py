@@ -628,3 +628,135 @@ class RollbackRecord(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     project = relationship("Project")
+
+
+# ==========================================
+# Observability, AIOps & Self-Healing Entities
+# ==========================================
+
+class TelemetryMetricRecord(Base):
+    __tablename__ = "telemetry_metrics"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=False, index=True)
+    metric_name = Column(String(100), nullable=False, index=True)
+    metric_value = Column(Float, nullable=False)
+    unit = Column(String(50), default="count")
+    dimensions = Column(JSON, default=dict)
+    timestamp = Column(DateTime, default=datetime.utcnow, index=True)
+
+    project = relationship("Project")
+
+
+class AlertRule(Base):
+    __tablename__ = "alert_rules"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=False, index=True)
+    name = Column(String(150), nullable=False)
+    metric_name = Column(String(100), nullable=False)
+    condition = Column(String(20), default=">")  # >, <, >=, <=, ==
+    threshold = Column(Float, nullable=False)
+    duration_seconds = Column(Integer, default=60)
+    severity = Column(String(50), default="medium")  # info, low, medium, high, critical
+    is_enabled = Column(Boolean, default=True)
+    notification_channels = Column(JSON, default=list)  # webhook, slack, email
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    project = relationship("Project")
+    events = relationship("AlertEvent", back_populates="rule", cascade="all, delete-orphan")
+
+
+class AlertEvent(Base):
+    __tablename__ = "alert_events"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    rule_id = Column(String(36), ForeignKey("alert_rules.id"), nullable=False, index=True)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=False, index=True)
+    title = Column(String(255), nullable=False)
+    severity = Column(String(50), nullable=False)
+    metric_value = Column(Float, nullable=False)
+    threshold = Column(Float, nullable=False)
+    status = Column(String(50), default="firing")  # firing, acknowledged, resolved, suppressed
+    fingerprint = Column(String(64), nullable=False, index=True)  # Deduplication hash
+    context_json = Column(JSON, default=dict)
+    triggered_at = Column(DateTime, default=datetime.utcnow)
+    resolved_at = Column(DateTime, nullable=True)
+
+    rule = relationship("AlertRule", back_populates="events")
+    project = relationship("Project")
+
+
+class IncidentRecord(Base):
+    __tablename__ = "incidents"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=False, index=True)
+    title = Column(String(255), nullable=False)
+    environment = Column(String(50), default="production")  # development, staging, production
+    severity = Column(String(50), default="high")  # low, medium, high, critical
+    status = Column(String(50), default="detected")  # detected, investigating, rca_completed, remediating, resolved, closed
+    affected_service = Column(String(100), nullable=False)
+    impact_summary = Column(Text, nullable=False)
+    lead_alert_id = Column(String(36), nullable=True)
+    trace_id = Column(String(64), nullable=True, index=True)
+    detected_at = Column(DateTime, default=datetime.utcnow)
+    acknowledged_at = Column(DateTime, nullable=True)
+    resolved_at = Column(DateTime, nullable=True)
+
+    project = relationship("Project")
+    rca = relationship("RCAReport", back_populates="incident", uselist=False, cascade="all, delete-orphan")
+    healing_actions = relationship("SelfHealingAction", back_populates="incident")
+
+
+class RCAReport(Base):
+    __tablename__ = "rca_reports"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    incident_id = Column(String(36), ForeignKey("incidents.id"), nullable=False, unique=True)
+    probable_root_cause = Column(Text, nullable=False)
+    confidence_score = Column(Float, default=0.85)  # 0.0 to 1.0
+    supporting_evidence = Column(JSON, default=dict)  # correlated metrics, log traces, deployment sha
+    alternative_explanations = Column(JSON, default=list)
+    recommended_action = Column(String(255), nullable=False)
+    healing_tier = Column(Integer, default=1)  # 1=Auto, 2=Approval Required, 3=Human Only
+    risk_assessment = Column(String(100), default="low")
+    generated_at = Column(DateTime, default=datetime.utcnow)
+
+    incident = relationship("IncidentRecord", back_populates="rca")
+
+
+class SelfHealingAction(Base):
+    __tablename__ = "self_healing_actions"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=False, index=True)
+    incident_id = Column(String(36), ForeignKey("incidents.id"), nullable=True)
+    action_type = Column(String(100), nullable=False)  # restart_container, retry_job, clear_cache, scale_service, rollback_release
+    tier = Column(Integer, default=1)  # 1=Auto, 2=Approval Required, 3=Human Only
+    status = Column(String(50), default="pending_approval")  # pending_approval, approved, executing, succeeded, failed, rolled_back
+    approval_id = Column(String(36), ForeignKey("approval_records.id"), nullable=True)
+    parameters = Column(JSON, default=dict)
+    execution_log = Column(Text, nullable=True)
+    duration_ms = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    executed_at = Column(DateTime, nullable=True)
+
+    project = relationship("Project")
+    incident = relationship("IncidentRecord", back_populates="healing_actions")
+
+
+class SLOConfiguration(Base):
+    __tablename__ = "slo_configurations"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=False, index=True)
+    name = Column(String(150), nullable=False)
+    target_percentage = Column(Float, default=99.9)  # e.g. 99.9%
+    evaluation_window_days = Column(Integer, default=30)
+    current_sli = Column(Float, default=99.95)
+    error_budget_remaining_percent = Column(Float, default=85.0)
+    status = Column(String(50), default="healthy")  # healthy, at_risk, breached
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    project = relationship("Project")

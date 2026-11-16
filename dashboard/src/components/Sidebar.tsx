@@ -21,12 +21,14 @@ import {
   ShieldCheck,
   DollarSign,
   Settings,
+  HeartPulse,
 } from "lucide-react";
 
 export type ModuleKey =
   | "overview"
   | "create_project"
   | "cloud_execution"
+  | "operations_center"
   | "project_management"
   | "agent_management"
   | "execution_monitor"
@@ -70,6 +72,7 @@ export function Sidebar({ currentModule, onSelectModule, pendingApprovalsCount =
       items: [
         { key: "overview" as ModuleKey, label: "Overview", icon: LayoutDashboard },
         { key: "create_project" as ModuleKey, label: "Create Project", icon: PlusCircle },
+        { key: "operations_center" as ModuleKey, label: "Operations & Self-Healing", icon: HeartPulse, badge: "AIOps" },
         { key: "project_management" as ModuleKey, label: "Projects", icon: FolderKanban },
         { key: "execution_monitor" as ModuleKey, label: "Execution Monitor", icon: Activity },
         { key: "cloud_execution" as ModuleKey, label: "Cloud Execution Center", icon: Cloud, badge: "Fargate" },

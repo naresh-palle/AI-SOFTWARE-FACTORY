@@ -783,3 +783,304 @@ export async function triggerRollback(payload: {
     body: JSON.stringify(payload),
   });
 }
+
+// ---------------------------------------------------------------------------
+// Phase 7: Observability, AIOps & Self-Healing APIs
+// ---------------------------------------------------------------------------
+export async function fetchTelemetryMetrics(projectId?: string, metricName?: string) {
+  const params = new URLSearchParams();
+  if (projectId) params.append("project_id", projectId);
+  if (metricName) params.append("metric_name", metricName);
+  const qs = params.toString() ? `?${params.toString()}` : "";
+  return fetchJSON<Array<{
+    id: string;
+    project_id: string;
+    metric_name: string;
+    metric_value: number;
+    unit: string;
+    dimensions: any;
+    timestamp: string;
+  }>>(`/api/v1/observability/metrics${qs}`);
+}
+
+export async function ingestMetric(payload: {
+  project_id: string;
+  metric_name: string;
+  metric_value: number;
+  unit?: string;
+  dimensions?: any;
+}) {
+  return fetchJSON<{ status: string; records_flushed: number }>("/api/v1/observability/metrics", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function runAppProbe(payload: {
+  project_id: string;
+  endpoint_url?: string;
+  timeout_seconds?: number;
+}) {
+  return fetchJSON<{
+    status: string;
+    status_code: number;
+    latency_ms: number;
+    is_healthy: boolean;
+    error_message?: string;
+  }>("/api/v1/observability/probe", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function sampleInfra(payload: { project_id: string }) {
+  return fetchJSON<{
+    status: string;
+    metrics_count: number;
+    metrics: Array<{ metric_name: string; value: number; unit: string }>;
+  }>("/api/v1/observability/sample-infra", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function fetchAlerts(projectId?: string, status?: string) {
+  const params = new URLSearchParams();
+  if (projectId) params.append("project_id", projectId);
+  if (status) params.append("status", status);
+  const qs = params.toString() ? `?${params.toString()}` : "";
+  return fetchJSON<Array<{
+    id: string;
+    rule_id: string;
+    project_id: string;
+    title: string;
+    severity: string;
+    metric_value: number;
+    threshold: number;
+    status: string;
+    fingerprint: string;
+    context_json: any;
+    triggered_at: string;
+    resolved_at?: string;
+  }>>(`/api/v1/observability/alerts${qs}`);
+}
+
+export async function fetchAlertRules(projectId?: string) {
+  const qs = projectId ? `?project_id=${projectId}` : "";
+  return fetchJSON<Array<{
+    id: string;
+    project_id: string;
+    name: string;
+    metric_name: string;
+    condition: string;
+    threshold: number;
+    duration_seconds: number;
+    severity: string;
+    is_enabled: boolean;
+    notification_channels: string[];
+  }>>(`/api/v1/observability/alerts/rules${qs}`);
+}
+
+export async function createAlertRule(payload: {
+  project_id: string;
+  name: string;
+  metric_name: string;
+  condition?: string;
+  threshold: number;
+  duration_seconds?: number;
+  severity?: string;
+  notification_channels?: string[];
+}) {
+  return fetchJSON<{ id: string; name: string; metric_name: string }>("/api/v1/observability/alerts/rules", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function fetchIncidents(projectId?: string) {
+  const qs = projectId ? `?project_id=${projectId}` : "";
+  return fetchJSON<Array<{
+    id: string;
+    project_id: string;
+    title: string;
+    environment: string;
+    severity: string;
+    status: string;
+    affected_service: string;
+    impact_summary: string;
+    lead_alert_id?: string;
+    trace_id?: string;
+    detected_at: string;
+    acknowledged_at?: string;
+    resolved_at?: string;
+  }>>(`/api/v1/observability/incidents${qs}`);
+}
+
+export async function fetchIncidentDetails(incidentId: string) {
+  return fetchJSON<{
+    incident: {
+      id: string;
+      project_id: string;
+      title: string;
+      environment: string;
+      severity: string;
+      status: string;
+      affected_service: string;
+      impact_summary: string;
+      trace_id?: string;
+      detected_at: string;
+      acknowledged_at?: string;
+      resolved_at?: string;
+    };
+    rca?: {
+      id: string;
+      probable_root_cause: string;
+      confidence_score: number;
+      supporting_evidence: any;
+      alternative_explanations: string[];
+      recommended_action: string;
+      healing_tier: number;
+      risk_assessment: string;
+      generated_at: string;
+    };
+    actions: Array<{
+      id: string;
+      action_type: string;
+      tier: number;
+      status: string;
+      duration_ms: number;
+      execution_log: string;
+      created_at: string;
+    }>;
+  }>(`/api/v1/observability/incidents/${incidentId}`);
+}
+
+export async function triggerIncidentRCA(incidentId: string) {
+  return fetchJSON<{
+    incident_id: string;
+    probable_root_cause: string;
+    confidence_score: number;
+    recommended_action: string;
+    healing_tier: number;
+    risk_assessment: string;
+    supporting_evidence: any;
+  }>(`/api/v1/observability/incidents/${incidentId}/rca`, {
+    method: "POST",
+  });
+}
+
+export async function transitionIncident(incidentId: string, payload: { new_status: string; notes?: string }) {
+  return fetchJSON<{ id: string; status: string }>(`/api/v1/observability/incidents/${incidentId}/transition`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function executeSelfHealing(payload: {
+  project_id: string;
+  action_type: string;
+  parameters?: any;
+  incident_id?: string;
+  force_approved?: boolean;
+}) {
+  return fetchJSON<{
+    id: string;
+    action_type: string;
+    tier: number;
+    status: string;
+    approval_id?: string;
+    duration_ms: number;
+    execution_log: string;
+  }>("/api/v1/observability/self-healing/execute", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function fetchSelfHealingActions(projectId?: string) {
+  const qs = projectId ? `?project_id=${projectId}` : "";
+  return fetchJSON<Array<{
+    id: string;
+    project_id: string;
+    incident_id?: string;
+    action_type: string;
+    tier: number;
+    status: string;
+    approval_id?: string;
+    duration_ms: number;
+    execution_log: string;
+    created_at: string;
+  }>>(`/api/v1/observability/self-healing/actions${qs}`);
+}
+
+export async function fetchSLOs(projectId: string) {
+  return fetchJSON<Array<{
+    id: string;
+    name: string;
+    target_percentage: number;
+    evaluation_window_days: number;
+    current_sli: number;
+    error_budget_remaining_percent: number;
+    status: string;
+    updated_at: string;
+  }>>(`/api/v1/observability/slo?project_id=${projectId}`);
+}
+
+export async function configureSLO(payload: {
+  project_id: string;
+  name: string;
+  target_percentage?: number;
+  evaluation_window_days?: number;
+}) {
+  return fetchJSON<{
+    id: string;
+    name: string;
+    target_percentage: number;
+    status: string;
+  }>("/api/v1/observability/slo", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function fetchReliabilityMetrics(projectId?: string) {
+  const qs = projectId ? `?project_id=${projectId}` : "";
+  return fetchJSON<{
+    total_incidents: number;
+    resolved_incidents: number;
+    mttd_minutes: number;
+    mtta_minutes: number;
+    mttr_minutes: number;
+  }>(`/api/v1/observability/reliability/metrics${qs}`);
+}
+
+export async function fetchFinOpsCosts(projectId?: string) {
+  const qs = projectId ? `?project_id=${projectId}` : "";
+  return fetchJSON<{
+    total_spend_usd: number;
+    breakdown: {
+      llm_tokens: number;
+      cloud_infra: number;
+      third_party_api: number;
+    };
+    monthly_projected_usd: number;
+    currency: string;
+  }>(`/api/v1/observability/finops/costs${qs}`);
+}
+
+export async function fetchFinOpsRecommendations(projectId?: string) {
+  const qs = projectId ? `?project_id=${projectId}` : "";
+  return fetchJSON<Array<{
+    title: string;
+    severity: string;
+    monthly_savings_usd: number;
+    action: string;
+  }>>(`/api/v1/observability/finops/recommendations${qs}`);
+}
