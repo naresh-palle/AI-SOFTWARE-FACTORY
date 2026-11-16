@@ -13,3 +13,11 @@ os.environ["FACTORY_API_TOKEN"] = ""
 os.environ["DEFAULT_LLM_PROVIDER"] = "mock"
 os.environ["DEBUG"] = "false"
 os.environ["FACTORY_ENABLE_GITHUB_PUSH"] = "false"
+
+import pytest
+
+@pytest.fixture(autouse=True)
+def reset_rate_limit_bucket():
+    """Reset rate limiter state before each test to prevent test cross-talk."""
+    from factory.core.security_middleware import RateLimiterMiddleware
+    RateLimiterMiddleware.reset()

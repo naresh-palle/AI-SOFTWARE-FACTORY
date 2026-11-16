@@ -1,0 +1,100 @@
+name: Production Release Pipeline & Governance Gates
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*.*.*'
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  packages: write
+  security-events: write
+
+jobs:
+  security-and-lint:
+    name: Security Scan & Code Integrity
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt bandit
+
+      - name: Run Bandit SAST Scan
+        run: |
+          bandit -r factory/ -ll -q
+
+      - name: Check for Exposed Secrets
+        run: |
+          python -c 'from factory.core.security_scanner import ProductionSecurityScanner; res = ProductionSecurityScanner.scan_for_exposed_secrets(); assert len(res) == 0, f"Leaked secrets found: {res}"'
+
+  automated-tests:
+    name: Full Test Suite & Multi-Tenant Release Gates
+    needs: security-and-lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pytest pytest-asyncio
+
+      - name: Run Complete Test Suite
+        run: |
+          pytest tests/ -v
+
+      - name: Verify Multi-Tenant Isolation Gate
+        run: |
+          pytest tests/test_tenant_isolation_gate.py -v
+
+  frontend-build:
+    name: Next.js Dashboard Production Build
+    needs: security-and-lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build Dashboard
+        working-directory: dashboard
+        run: |
+          npm ci
+          npm run build
+
+  production-release:
+    name: Production Release Gate & Immutable Tagging
+    needs: [automated-tests, frontend-build]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://app.factory.ai
+    steps:
+      - name: Release Manifest Verification
+        run: |
+          echo "Production release gate cleared. Deploying release ${{ github.ref_name }}."

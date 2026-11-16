@@ -14,6 +14,11 @@ from factory.api.maintenance_routes import router as maintenance_router
 from factory.api.saas_routes import router as saas_router
 from factory.core.config import enforce_production_secrets, settings
 from factory.core.database import get_db_session, init_db
+from factory.core.security_middleware import (
+    SecurityHeadersMiddleware,
+    RateLimiterMiddleware,
+    RequestSizeLimitMiddleware,
+)
 from factory.agents.registry import AgentRegistry
 from factory.core.logger import logger
 
@@ -47,6 +52,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(RateLimiterMiddleware, max_requests=120, window_seconds=60)
+app.add_middleware(RequestSizeLimitMiddleware, max_content_length=10 * 1024 * 1024)
 
 app.include_router(router)
 app.include_router(social_router, prefix="/api/v1")

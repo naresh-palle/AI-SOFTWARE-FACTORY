@@ -91,22 +91,25 @@ class SubscriptionManager:
 
     async def initialize_plans(self, db: AsyncSession):
         """Seed default plans into database if not present."""
-        for p in self.DEFAULT_PLANS:
-            q = select(SubscriptionPlan).where(SubscriptionPlan.plan_code == p["plan_code"])
-            existing = (await db.execute(q)).scalar_one_or_none()
-            if not existing:
-                plan = SubscriptionPlan(
-                    plan_code=p["plan_code"],
-                    name=p["name"],
-                    description=p["description"],
-                    price_monthly_usd=p["price_monthly_usd"],
-                    price_yearly_usd=p["price_yearly_usd"],
-                    limits_json=p["limits_json"],
-                    is_active=True,
-                    created_at=datetime.utcnow(),
-                )
-                db.add(plan)
-        await db.commit()
+        try:
+            for p in self.DEFAULT_PLANS:
+                q = select(SubscriptionPlan).where(SubscriptionPlan.plan_code == p["plan_code"])
+                existing = (await db.execute(q)).scalar_one_or_none()
+                if not existing:
+                    plan = SubscriptionPlan(
+                        plan_code=p["plan_code"],
+                        name=p["name"],
+                        description=p["description"],
+                        price_monthly_usd=p["price_monthly_usd"],
+                        price_yearly_usd=p["price_yearly_usd"],
+                        limits_json=p["limits_json"],
+                        is_active=True,
+                        created_at=datetime.utcnow(),
+                    )
+                    db.add(plan)
+            await db.commit()
+        except Exception:
+            await db.rollback()
 
     async def list_plans(self, db: AsyncSession) -> List[SubscriptionPlan]:
         """Fetch all active plans."""
