@@ -81,6 +81,27 @@ class Settings(BaseSettings):
     META_APP_ID: Optional[str] = None
     META_APP_SECRET: Optional[str] = None
     META_ACCESS_TOKEN: Optional[str] = None
+    META_VERIFY_TOKEN: str = "factory_meta_verify_token_secure"
+    META_GRAPH_VERSION: str = "v20.0"
+
+    # Google & YouTube Developer Account
+    GOOGLE_CLIENT_ID: Optional[str] = None
+    GOOGLE_CLIENT_SECRET: Optional[str] = None
+    YOUTUBE_API_KEY: Optional[str] = None
+
+    # X (Twitter) Developer Account
+    X_CLIENT_ID: Optional[str] = None
+    X_CLIENT_SECRET: Optional[str] = None
+    X_API_KEY: Optional[str] = None
+    X_API_SECRET: Optional[str] = None
+
+    # LinkedIn Developer Account
+    LINKEDIN_CLIENT_ID: Optional[str] = None
+    LINKEDIN_CLIENT_SECRET: Optional[str] = None
+
+    # TikTok Developer Account
+    TIKTOK_CLIENT_KEY: Optional[str] = None
+    TIKTOK_CLIENT_SECRET: Optional[str] = None
 
 
 def enforce_production_secrets(

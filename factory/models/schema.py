@@ -230,13 +230,119 @@ class OAuthConnection(Base):
 
     id = Column(String(36), primary_key=True, default=generate_uuid)
     tenant_id = Column(String(100), nullable=False, index=True)
-    provider = Column(String(50), nullable=False)  # facebook, google, x, linkedin, tiktok
+    provider = Column(String(50), nullable=False)  # facebook, instagram, whatsapp, google, youtube, x, linkedin, tiktok
+    account_type = Column(String(50), default="customer")  # factory_owner, customer
     user_identifier = Column(String(255), nullable=False)
+    account_name = Column(String(255), nullable=True)
     encrypted_access_token = Column(Text, nullable=False)
     encrypted_refresh_token = Column(Text, nullable=True)
     token_expires_at = Column(DateTime, nullable=True)
     granted_scopes = Column(JSON, default=list)
+    status = Column(String(50), default="active")  # active, expired, revoked
+    rate_limit_remaining = Column(Integer, default=1000)
+    last_refreshed_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class DeveloperApplication(Base):
+    __tablename__ = "developer_applications"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    developer_account_id = Column(String(36), ForeignKey("developer_account_references.id"), nullable=True)
+    platform = Column(String(50), nullable=False)  # meta, google, x, linkedin, tiktok
+    app_id = Column(String(100), nullable=False, unique=True, index=True)
+    app_name = Column(String(255), nullable=False)
+    app_type = Column(String(50), default="business")  # business, consumer, gaming
+    status = Column(String(50), default="configured")  # configured, tested, pending_approval, approved, rejected
+    client_id = Column(String(255), nullable=True)
+    encrypted_client_secret = Column(Text, nullable=True)
+    webhook_url = Column(String(500), nullable=True)
+    verify_token = Column(String(255), nullable=True)
+    privacy_policy_url = Column(String(500), nullable=True)
+    data_deletion_url = Column(String(500), nullable=True)
+    redirect_uris = Column(JSON, default=list)
+    enabled_products = Column(JSON, default=list)  # facebook_login, instagram_graph, whatsapp_business, messenger, threads, youtube, x, linkedin, tiktok
+    app_review_status = Column(JSON, default=dict)
+    permissions_tracked = Column(JSON, default=list)
+    rate_limit_tier = Column(String(50), default="standard")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class SocialPlatformCatalog(Base):
+    __tablename__ = "social_platform_catalog"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    platform_key = Column(String(50), unique=True, nullable=False, index=True)  # meta, facebook, instagram, whatsapp, messenger, threads, youtube, google, x, linkedin, tiktok
+    display_name = Column(String(100), nullable=False)
+    category = Column(String(50), nullable=False)  # meta, google, other
+    supported_features = Column(JSON, default=list)
+    auth_type = Column(String(50), default="oauth2")  # oauth2, pkce, api_key
+    api_version = Column(String(20), default="v1")
+    doc_url = Column(String(500), nullable=True)
+    is_active = Column(Boolean, default=True)
+
+
+class SocialAppReview(Base):
+    __tablename__ = "social_app_reviews"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    app_id = Column(String(100), nullable=False, index=True)
+    platform = Column(String(50), nullable=False)
+    submission_type = Column(String(100), default="permissions")  # permissions, business_verification, use_case
+    requested_permissions = Column(JSON, default=list)
+    status = Column(String(50), default="draft")  # draft, submitted, in_review, approved, rejected
+    reviewer_feedback = Column(Text, nullable=True)
+    submission_notes = Column(Text, nullable=True)
+    submitted_at = Column(DateTime, nullable=True)
+    decided_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class SocialIntegrationLog(Base):
+    __tablename__ = "social_integration_logs"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    project_id = Column(String(36), nullable=True, index=True)
+    tenant_id = Column(String(100), nullable=False, default="default", index=True)
+    platform = Column(String(50), nullable=False, index=True)
+    endpoint = Column(String(255), nullable=False)
+    method = Column(String(10), default="GET")
+    status_code = Column(Integer, default=200)
+    latency_ms = Column(Integer, default=0)
+    success = Column(Boolean, default=True)
+    error_message = Column(Text, nullable=True)
+    request_id = Column(String(100), nullable=True)
+    audit_actor = Column(String(100), default="SocialIntegrationEngine")
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class SocialApiError(Base):
+    __tablename__ = "social_api_errors"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    platform = Column(String(50), nullable=False, index=True)
+    error_code = Column(String(100), nullable=False)
+    error_subcode = Column(String(100), nullable=True)
+    error_message = Column(Text, nullable=False)
+    error_type = Column(String(100), nullable=True)
+    resolution_guidance = Column(Text, nullable=True)
+    occurrences_count = Column(Integer, default=1)
+    last_occurred_at = Column(DateTime, default=datetime.utcnow)
+
+
+class AccountConnectionHistory(Base):
+    __tablename__ = "account_connection_history"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    tenant_id = Column(String(100), nullable=False, index=True)
+    platform = Column(String(50), nullable=False)
+    user_identifier = Column(String(255), nullable=False)
+    action = Column(String(50), nullable=False)  # connected, token_refreshed, scope_updated, disconnected, revoked
+    actor = Column(String(100), default="system")
+    details_json = Column(JSON, default=dict)
+    timestamp = Column(DateTime, default=datetime.utcnow)
 
 
 class WebhookSubscription(Base):
