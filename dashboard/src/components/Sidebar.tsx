@@ -4,6 +4,7 @@ import React from "react";
 import {
   LayoutDashboard,
   PlusCircle,
+  Cloud,
   FolderKanban,
   Bot,
   Activity,
@@ -25,6 +26,7 @@ import {
 export type ModuleKey =
   | "overview"
   | "create_project"
+  | "cloud_execution"
   | "project_management"
   | "agent_management"
   | "execution_monitor"
@@ -70,6 +72,7 @@ export function Sidebar({ currentModule, onSelectModule, pendingApprovalsCount =
         { key: "create_project" as ModuleKey, label: "Create Project", icon: PlusCircle },
         { key: "project_management" as ModuleKey, label: "Projects", icon: FolderKanban },
         { key: "execution_monitor" as ModuleKey, label: "Execution Monitor", icon: Activity },
+        { key: "cloud_execution" as ModuleKey, label: "Cloud Execution Center", icon: Cloud, badge: "Fargate" },
       ],
     },
     {

@@ -25,6 +25,7 @@ interface HeaderProps {
 const moduleTitles: Record<ModuleKey, { title: string; subtitle: string }> = {
   overview: { title: "Operations Overview", subtitle: "Real-time AI Software Factory metrics & autonomous workflows" },
   create_project: { title: "Create Software Project", subtitle: "Enter natural language software requirements to activate agents" },
+  cloud_execution: { title: "Cloud Execution Center", subtitle: "Autonomous execution engine running on AWS ECS/Fargate with persistent recovery" },
   project_management: { title: "Project Portfolio", subtitle: "Manage active and completed multi-agent projects" },
   agent_management: { title: "Specialist Agent Registry", subtitle: "97 specialized autonomous engineering roles across 10 disciplines" },
   execution_monitor: { title: "Agent Execution Monitor", subtitle: "Live pipeline tracker with verifiable deliverables across 23 stages" },

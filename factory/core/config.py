@@ -103,6 +103,28 @@ class Settings(BaseSettings):
     TIKTOK_CLIENT_KEY: Optional[str] = None
     TIKTOK_CLIENT_SECRET: Optional[str] = None
 
+    # Cloud Worker & Autonomous Execution Engine
+    WORKER_AUTH_TOKEN: str = "factory_cloud_worker_internal_secret_token"
+    WORKER_HEARTBEAT_TIMEOUT_SECONDS: int = 60
+    WORKER_LEASE_DURATION_SECONDS: int = 180
+    WORKER_MAX_CONCURRENCY: int = 10
+    WORKER_DEFAULT_CPU_CORES: int = 2
+    WORKER_DEFAULT_MEMORY_MB: int = 4096
+
+    # AWS Cloud Infrastructure
+    AWS_REGION: str = "us-east-1"
+    AWS_ACCESS_KEY_ID: Optional[str] = None
+    AWS_SECRET_ACCESS_KEY: Optional[str] = None
+    AWS_S3_ARTIFACTS_BUCKET: str = "ai-software-factory-artifacts"
+    AWS_ECS_CLUSTER: str = "ai-software-factory-cluster"
+    AWS_ECS_TASK_FAMILY: str = "ai-factory-cloud-worker"
+    AWS_SECRETS_PREFIX: str = "ai-software-factory/"
+
+    # Execution Budget & Cost Governance
+    PROJECT_DEFAULT_BUDGET_USD: float = 50.0
+    WORKER_COST_PER_VCPU_HOUR_USD: float = 0.04048
+    WORKER_COST_PER_GB_HOUR_USD: float = 0.004445
+
 
 def enforce_production_secrets(
     environment: EnvironmentType,

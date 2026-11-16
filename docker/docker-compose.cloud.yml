@@ -1,0 +1,93 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: factory_cloud_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-ai_factory}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - factory_internal
+
+  redis:
+    image: redis:7-alpine
+    container_name: factory_cloud_redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - factory_internal
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: factory_cloud_backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-ai_factory}
+      REDIS_URL: redis://redis:6379/0
+      ENVIRONMENT: production
+      WORKER_AUTH_TOKEN: ${WORKER_AUTH_TOKEN:-factory_cloud_worker_internal_secret_token}
+    ports:
+      - "8000:8000"
+    networks:
+      - factory_internal
+
+  cloud_worker_1:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.cloud-worker
+    container_name: factory_fargate_worker_1
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-ai_factory}
+      REDIS_URL: redis://redis:6379/0
+      ENVIRONMENT: production
+      WORKER_AUTH_TOKEN: ${WORKER_AUTH_TOKEN:-factory_cloud_worker_internal_secret_token}
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4096M
+        reservations:
+          cpus: '1.0'
+          memory: 2048M
+    networks:
+      - factory_internal
+
+networks:
+  factory_internal:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:

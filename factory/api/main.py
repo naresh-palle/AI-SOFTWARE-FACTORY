@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from factory.api.routes import router
 from factory.api.social_routes import router as social_router
+from factory.api.worker_routes import router as worker_router
 from factory.core.config import enforce_production_secrets, settings
 from factory.core.database import get_db_session, init_db
 from factory.agents.registry import AgentRegistry
@@ -45,6 +46,7 @@ app.add_middleware(
 
 app.include_router(router)
 app.include_router(social_router, prefix="/api/v1")
+app.include_router(worker_router, prefix="/api/v1")
 
 
 if __name__ == "__main__":

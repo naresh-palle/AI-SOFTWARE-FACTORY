@@ -489,3 +489,129 @@ export async function initiateSocialOAuth(platform: string, tenantId?: string, r
     }),
   });
 }
+
+
+// ==========================================
+// Cloud Worker & Execution Engine APIs
+// ==========================================
+
+export async function fetchCloudStatus() {
+  return fetchJSON<{
+    infrastructure: {
+      provider: string;
+      cluster_name: string;
+      region: string;
+      s3_bucket: string;
+      status: string;
+    };
+    workers: {
+      total_registered: number;
+      active: number;
+      idle: number;
+      busy: number;
+      unhealthy: number;
+      terminated: number;
+    };
+    jobs: {
+      queued: number;
+      running: number;
+      paused: number;
+      blocked_on_approval: number;
+      completed: number;
+      failed: number;
+      cancelled: number;
+      dead_letter_queue: number;
+    };
+    cost_governance: {
+      default_project_budget_usd: number;
+      vcpu_hourly_rate_usd: number;
+      memory_gb_hourly_rate_usd: number;
+    };
+  }>("/api/v1/cloud/status");
+}
+
+export async function fetchCloudJobs(projectId?: string) {
+  const query = projectId ? `?project_id=${projectId}` : "";
+  return fetchJSON<
+    Array<{
+      id: string;
+      project_id: string;
+      job_type: string;
+      status: string;
+      priority: number;
+      current_stage: number;
+      target_stage: number;
+      assigned_worker_id?: string;
+      retry_count: number;
+      error_message?: string;
+      checkpoint_data?: any;
+      created_at: string;
+      updated_at: string;
+    }>
+  >(`/api/v1/cloud/jobs${query}`);
+}
+
+export async function fetchCloudWorkers() {
+  return fetchJSON<
+    Array<{
+      id: string;
+      worker_name: string;
+      hostname: string;
+      ip_address: string;
+      status: string;
+      cpu_cores: number;
+      memory_mb: number;
+      current_job_id?: string;
+      last_heartbeat: string;
+      total_jobs_completed: number;
+    }>
+  >("/api/v1/cloud/workers");
+}
+
+export async function submitCloudJob(projectId: string, targetStage: number = 23, priority: number = 5) {
+  return fetchJSON<{
+    job_id: string;
+    project_id: string;
+    status: string;
+    current_stage: number;
+    target_stage: number;
+  }>("/api/v1/cloud/submit", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ project_id: projectId, target_stage: targetStage, priority }),
+  });
+}
+
+export async function pauseCloudJob(jobId: string) {
+  return fetchJSON<{ job_id: string; status: string }>(`/api/v1/cloud/jobs/${jobId}/pause`, {
+    method: "POST",
+  });
+}
+
+export async function resumeCloudJob(jobId: string) {
+  return fetchJSON<{ job_id: string; status: string }>(`/api/v1/cloud/jobs/${jobId}/resume`, {
+    method: "POST",
+  });
+}
+
+export async function cancelCloudJob(jobId: string) {
+  return fetchJSON<{ job_id: string; status: string }>(`/api/v1/cloud/jobs/${jobId}/cancel`, {
+    method: "POST",
+  });
+}
+
+export async function retryCloudJob(jobId: string) {
+  return fetchJSON<{ job_id: string; status: string; retries_reset: boolean }>(`/api/v1/cloud/jobs/${jobId}/retry`, {
+    method: "POST",
+  });
+}
+
+export async function triggerCloudRecovery() {
+  return fetchJSON<{
+    status: string;
+    recovered_jobs_count: number;
+    unhealthy_workers_count: number;
+  }>("/api/v1/cloud/recovery", {
+    method: "POST",
+  });
+}

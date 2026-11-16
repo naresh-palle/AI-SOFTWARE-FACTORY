@@ -444,3 +444,87 @@ class AuditLog(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     project = relationship("Project", back_populates="audit_logs")
+
+
+# ==========================================
+# Cloud Worker & Persistent Workflow Entities
+# ==========================================
+
+class WorkerNode(Base):
+    __tablename__ = "worker_nodes"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    worker_name = Column(String(100), unique=True, nullable=False)
+    hostname = Column(String(255), nullable=True)
+    ip_address = Column(String(64), nullable=True)
+    status = Column(String(50), default="registered")  # registered, idle, busy, unhealthy, draining, terminated
+    cpu_cores = Column(Integer, default=2)
+    memory_mb = Column(Integer, default=4096)
+    current_job_id = Column(String(36), nullable=True)
+    last_heartbeat = Column(DateTime, default=datetime.utcnow)
+    registered_at = Column(DateTime, default=datetime.utcnow)
+    total_jobs_completed = Column(Integer, default=0)
+    tags = Column(JSON, default=dict)
+
+
+class WorkflowJob(Base):
+    __tablename__ = "workflow_jobs"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=False, index=True)
+    job_type = Column(String(50), default="full_pipeline")  # full_pipeline, single_stage, code_generation
+    status = Column(String(50), default="queued")  # queued, assigned, running, paused, blocked_on_approval, completed, failed, cancelled
+    priority = Column(Integer, default=5)  # 1 to 10
+    current_stage = Column(Integer, default=1)
+    target_stage = Column(Integer, default=23)
+    assigned_worker_id = Column(String(36), ForeignKey("worker_nodes.id"), nullable=True)
+    lease_expires_at = Column(DateTime, nullable=True)
+    timeout_seconds = Column(Integer, default=3600)
+    retry_count = Column(Integer, default=0)
+    max_retries = Column(Integer, default=3)
+    backoff_multiplier = Column(Float, default=2.0)
+    idempotency_key = Column(String(128), unique=True, nullable=True, index=True)
+    error_message = Column(Text, nullable=True)
+    checkpoint_data = Column(JSON, default=dict)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    project = relationship("Project")
+    worker = relationship("WorkerNode")
+    checkpoints = relationship("WorkflowCheckpoint", back_populates="job", cascade="all, delete-orphan")
+
+
+class WorkflowCheckpoint(Base):
+    __tablename__ = "workflow_checkpoints"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    job_id = Column(String(36), ForeignKey("workflow_jobs.id"), nullable=False, index=True)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=False, index=True)
+    stage_number = Column(Integer, nullable=False)
+    stage_title = Column(String(255), nullable=False)
+    status = Column(String(50), default="completed")  # completed, failed, blocked_on_approval
+    evidence_json = Column(JSON, default=list)
+    artifacts_json = Column(JSON, default=dict)
+    duration_ms = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    job = relationship("WorkflowJob", back_populates="checkpoints")
+    project = relationship("Project")
+
+
+class DeadLetterJob(Base):
+    __tablename__ = "dead_letter_jobs"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    original_job_id = Column(String(36), nullable=False, index=True)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=False)
+    failure_reason = Column(Text, nullable=False)
+    error_details = Column(JSON, default=dict)
+    attempts_made = Column(Integer, default=3)
+    last_attempt_at = Column(DateTime, default=datetime.utcnow)
+    resolved = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    project = relationship("Project")

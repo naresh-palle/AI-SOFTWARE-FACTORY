@@ -1,0 +1,40 @@
+# Multi-stage production container for Autonomous Cloud Worker
+FROM python:3.10-slim AS base
+
+# Install system dependencies: Git, Node.js, build tools, curl
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    curl \
+    build-essential \
+    ca-certificates \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Set working directory
+WORKDIR /app
+
+# Create non-root worker user for container isolation
+RUN useradd -m -u 1000 -s /bin/bash factoryworker
+
+# Install Python requirements
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application source code
+COPY --chown=factoryworker:factoryworker . .
+
+# Set environment
+ENV PYTHONPATH=/app \
+    PYTHONUNBUFFERED=1 \
+    ENVIRONMENT=production
+
+# Switch to isolated non-root user
+USER factoryworker
+
+# Healthcheck checking daemon responsiveness
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD python3 -c "import socket; sys.exit(0)"
+
+# Default entrypoint starts the Cloud Worker Daemon
+CMD ["python3", "-m", "factory.cloud_worker.daemon"]

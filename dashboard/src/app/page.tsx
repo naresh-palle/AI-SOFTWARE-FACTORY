@@ -8,6 +8,7 @@ import { fetchProjects, fetchOverviewStats } from "@/lib/api";
 
 // 18 Module Views
 import { OverviewView } from "@/components/views/OverviewView";
+import { CloudExecutionCenterView } from "@/components/views/CloudExecutionCenterView";
 import { CreateProjectView } from "@/components/views/CreateProjectView";
 import { ProjectManagementView } from "@/components/views/ProjectManagementView";
 import { AgentManagementView } from "@/components/views/AgentManagementView";
@@ -84,6 +85,7 @@ export default function DashboardPage() {
         {/* Viewport Content Area */}
         <main className="flex-1 overflow-y-auto p-8 scrollbar-thin scrollbar-thumb-slate-800">
           {currentModule === "overview" && <OverviewView onNavigate={setCurrentModule} />}
+          {currentModule === "cloud_execution" && <CloudExecutionCenterView />}
           {currentModule === "create_project" && (
             <CreateProjectView onProjectCreated={handleProjectCreated} />
           )}
