@@ -49,7 +49,8 @@ export type ModuleKey =
   | "costs"
   | "settings"
   | "saas_billing"
-  | "marketing_landing";
+  | "marketing_landing"
+  | "hypercare_launch";
 
 interface SidebarProps {
   currentModule: ModuleKey;
@@ -120,6 +121,7 @@ export function Sidebar({ currentModule, onSelectModule, pendingApprovalsCount =
     {
       title: "Commercial & SaaS",
       items: [
+        { key: "hypercare_launch" as ModuleKey, label: "Hypercare Launch Center", icon: Activity, badge: "Phase 11" },
         { key: "marketing_landing" as ModuleKey, label: "Platform Overview & Pricing", icon: Rocket, badge: "Live" },
         { key: "saas_billing" as ModuleKey, label: "SaaS & Subscriptions", icon: CreditCard, badge: "SaaS" },
       ],

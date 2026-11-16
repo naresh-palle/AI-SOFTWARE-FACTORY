@@ -46,6 +46,7 @@ const moduleTitles: Record<ModuleKey, { title: string; subtitle: string }> = {
   settings: { title: "System Configuration", subtitle: "Factory engine settings, LLM provider routing, and security keys" },
   saas_billing: { title: "SaaS Workspace & Commercial Billing", subtitle: "Multi-tenant subscriptions, quota management, Stripe/Razorpay payments & platform analytics" },
   marketing_landing: { title: "Platform Capabilities & Commercial Plans", subtitle: "Autonomous software development lifecycle, 97-agent swarm, pricing tiers & compliance" },
+  hypercare_launch: { title: "Hypercare Launch Center & Real-Time Production Telemetry", subtitle: "18 commercial metrics, pilot cohort rollout, automated self-healing & unit economics" },
 };
 
 export function Header({

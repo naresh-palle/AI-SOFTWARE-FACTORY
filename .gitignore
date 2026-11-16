@@ -45,3 +45,10 @@ workspace_projects/
 dashboard/node_modules/
 dashboard/.next/
 dashboard/out/
+
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+

@@ -30,6 +30,7 @@ import { CostManagementView } from "@/components/views/CostManagementView";
 import { SystemSettingsView } from "@/components/views/SystemSettingsView";
 import SaaSWorkspaceView from "@/components/views/SaaSWorkspaceView";
 import { MarketingLandingView } from "@/components/views/MarketingLandingView";
+import { HypercareLaunchCenterView } from "@/components/views/HypercareLaunchCenterView";
 
 export default function DashboardPage() {
   const [currentModule, setCurrentModule] = useState<ModuleKey>("overview");
@@ -138,6 +139,7 @@ export default function DashboardPage() {
           {currentModule === "settings" && <SystemSettingsView />}
           {currentModule === "saas_billing" && <SaaSWorkspaceView />}
           {currentModule === "marketing_landing" && <MarketingLandingView onNavigate={setCurrentModule} />}
+          {currentModule === "hypercare_launch" && <HypercareLaunchCenterView onNavigate={setCurrentModule} />}
         </main>
       </div>
     </div>

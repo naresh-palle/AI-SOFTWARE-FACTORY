@@ -102,5 +102,5 @@ resource "aws_iam_policy" "worker_least_privilege" {
 
 resource "aws_iam_role_policy_attachment" "worker_policy_attachment" {
   role       = aws_iam_role.worker_task_role.name
-  policy_arn = aws_iam_policy.worker_least_privilege.policy_arn
+  policy_arn = aws_iam_policy.worker_least_privilege.arn
 }

@@ -146,6 +146,21 @@ class UnitEconomicsEngine:
         }
 
     @classmethod
+    def get_unit_economics_summary(cls) -> Dict[str, Any]:
+        """Returns consolidated financial unit economics and gross margins across all tiers."""
+        summary = {}
+        for tier in cls.PLAN_CONFIGS.keys():
+            tier_data = cls.calculate_plan_unit_economics(tier)
+            summary[tier] = {
+                "monthly_revenue_usd": tier_data["monthly_revenue_usd"],
+                "total_cogs_usd": tier_data["cogs_breakdown"]["total_cogs_usd"],
+                "gross_profit_usd": tier_data["financial_metrics"]["gross_profit_usd"],
+                "gross_margin_percentage": tier_data["financial_metrics"]["gross_margin_percentage"],
+                "spending_cap_usd": tier_data["financial_metrics"]["spending_cap_ceiling_usd"],
+            }
+        return summary
+
+    @classmethod
     def evaluate_spending_cap(cls, plan_tier: str, current_incurred_cost_usd: float) -> Dict[str, Any]:
         """Enforces hard ceiling on customer resource expenditure to prevent runaway loss."""
         plan = cls.PLAN_CONFIGS.get(plan_tier.lower())

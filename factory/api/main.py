@@ -12,6 +12,7 @@ from factory.api.deployment_routes import router as deployment_router
 from factory.api.observability_routes import router as observability_router
 from factory.api.maintenance_routes import router as maintenance_router
 from factory.api.saas_routes import router as saas_router
+from factory.api.hypercare_routes import hypercare_router
 from factory.core.config import enforce_production_secrets, settings
 from factory.core.database import get_db_session, init_db
 from factory.core.security_middleware import (
@@ -63,6 +64,7 @@ app.include_router(deployment_router, prefix="/api/v1")
 app.include_router(observability_router, prefix="/api/v1")
 app.include_router(maintenance_router, prefix="/api/v1")
 app.include_router(saas_router, prefix="/api/v1")
+app.include_router(hypercare_router, prefix="/api/v1")
 
 
 if __name__ == "__main__":
